@@ -47,7 +47,10 @@ setInterval(() => {
   }
 }, 60 * 1000).unref();
 
-const authRateLimit = rateLimit({ windowMs: 10 * 60 * 1000, max: 8 });
+const authRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 100,
+});
 const apiRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 300 });
 
 module.exports = {
