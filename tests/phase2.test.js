@@ -1,12 +1,26 @@
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const request = require('supertest');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
+jest.mock('firebase-admin', () => {
+  const verifyIdToken = jest.fn();
+
+  return {
+    apps: [],
+    credential: {
+      applicationDefault: jest.fn(() => ({})),
+      cert: jest.fn(() => ({})),
+    },
+    initializeApp: jest.fn(),
+    auth: jest.fn(() => ({ verifyIdToken })),
+    __verifyIdToken: verifyIdToken,
+  };
+});
+
+const admin = require('firebase-admin');
 const app = require('../app');
 const Contest = require('../src/models/Contest');
-const Otp = require('../src/models/Otp');
 const Player = require('../src/models/Player');
 const Team = require('../src/models/Team');
 const Transaction = require('../src/models/Transaction');
@@ -51,34 +65,28 @@ beforeEach(async () => {
   );
 });
 
-test('OTP verify creates user and returns JWT, expired OTP is rejected', async () => {
-  const email = 'otp@example.com';
-  const otpHash = await bcrypt.hash('123456', 10);
-
-  await Otp.create({
+test('Google login verifies Firebase token, creates user, and returns JWT', async () => {
+  const email = 'google@example.com';
+  admin.__verifyIdToken.mockResolvedValueOnce({
     email,
-    otp: otpHash,
-    expiresAt: new Date(Date.now() + 60_000),
+    email_verified: true,
+    name: 'Google Player',
   });
-
   const success = await request(app)
-    .post('/api/auth/verify-otp')
-    .send({ email, otp: '123456' })
+    .post('/api/auth/google')
+    .send({ firebaseIdToken: 'valid-firebase-token' })
     .expect(200);
 
   expect(success.body.token).toBeTruthy();
   expect(success.body.user.email).toBe(email);
+  expect(success.body.user.name).toBe('Google Player');
 
-  await Otp.create({
-    email: 'expired@example.com',
-    otp: otpHash,
-    expiresAt: new Date(Date.now() - 1_000),
-  });
+  admin.__verifyIdToken.mockRejectedValueOnce(new Error('bad token'));
 
   await request(app)
-    .post('/api/auth/verify-otp')
-    .send({ email: 'expired@example.com', otp: '123456' })
-    .expect(400);
+    .post('/api/auth/google')
+    .send({ firebaseIdToken: 'bad-firebase-token' })
+    .expect(401);
 });
 
 test('contest join deducts wallet once and duplicate retries do not double charge', async () => {

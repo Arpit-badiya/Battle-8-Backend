@@ -14,7 +14,6 @@ const {
   deletePlayer,
 } = require("../controllers/playerController");
 
-// GET players
 router.get("/", getPlayers);
 
 router.get(
@@ -23,7 +22,6 @@ router.get(
   getContestPlayers
 );
 
-// CREATE player (admin only)
 router.post(
   "/create",
   authMiddleware,
