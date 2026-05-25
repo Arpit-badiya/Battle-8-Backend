@@ -1,10 +1,12 @@
 const Contest = require('../models/Contest');
 const Team = require('../models/Team');
 const Transaction = require('../models/Transaction');
+const User = require('../models/User');
 const { AppError } = require('../middlewares/errorMiddleware');
 const cache = require('./cacheService');
 const { emitContestUpdate } = require('./realtimeService');
 const { debitCoins } = require('./walletService');
+const { rewardFirstPaidJoin } = require('./referralService');
 const { withMongoTransaction } = require('../utils/transactions');
 const { getEffectiveContestStatus, isValidObjectId, normalizeContest } = require('../utils/helpers');
 
@@ -126,11 +128,24 @@ const joinContestCore = async ({ userId, contestId, idempotencyKey, session = nu
     session,
   });
 
+  let walletUser = updatedUser;
+
+  if (Number(contest.entryFee || 0) > 0) {
+    const referralReward = await rewardFirstPaidJoin({
+      userId,
+      contestId: contest._id,
+      session,
+    });
+    if (referralReward) {
+      walletUser = await User.findById(userId).session(session);
+    }
+  }
+
   return {
     contest: normalizeContest(contest, userId),
     wallet: {
-      balance: updatedUser.coins,
-      coins: updatedUser.coins,
+      balance: walletUser.coins,
+      coins: walletUser.coins,
     },
   };
 };

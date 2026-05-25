@@ -1,6 +1,13 @@
 const express = require("express");
+const multer = require('multer');
 
 const router = express.Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 2 * 1024 * 1024,
+  },
+});
 
 const authMiddleware = require("../middlewares/authMiddleware");
 
@@ -11,6 +18,8 @@ const {
   createContest,
   updateContest,
   getLeaderboard,
+  importContestPlayers,
+  importContestResults,
   refundContest,
   updateContestPlayers,
 } = require("../controllers/adminController");
@@ -55,6 +64,22 @@ router.put(
   authMiddleware,
   adminMiddleware,
   updateContestPlayers
+);
+
+router.post(
+  "/contests/:contestId/import-players",
+  authMiddleware,
+  adminMiddleware,
+  upload.single('file'),
+  importContestPlayers
+);
+
+router.post(
+  "/contests/:contestId/import-results",
+  authMiddleware,
+  adminMiddleware,
+  upload.single('file'),
+  importContestResults
 );
 
 module.exports = router;

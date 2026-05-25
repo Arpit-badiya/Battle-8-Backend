@@ -13,6 +13,7 @@ const {
 } = require('../middlewares/errorMiddleware');
 
 const logger = require('../utils/logger');
+const { applyReferralCode, ensureReferralCode } = require('../services/referralService');
 
 const {
   isValidEmail,
@@ -51,6 +52,7 @@ const serializeUser = (user) => ({
   name: user.name || '',
   coins: user.coins,
   role: user.role,
+  referralCode: user.referralCode || '',
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
 });
@@ -58,13 +60,9 @@ const serializeUser = (user) => ({
 exports.sendOtp = asyncHandler(
   async (req, res) => {
     try {
-      console.log("OTP ROUTE HIT");
-
       const email = normalizeEmail(
         req.body.email
       );
-
-      console.log("EMAIL:", email);
 
       if (!isValidEmail(email)) {
         throw new AppError(
@@ -77,10 +75,6 @@ exports.sendOtp = asyncHandler(
         await Otp.findOne({ email }).sort({
           createdAt: -1,
         });
-
-      console.log(
-        "RECENT OTP CHECK DONE"
-      );
 
       if (
         recentOtp &&
@@ -113,16 +107,10 @@ exports.sendOtp = asyncHandler(
         .randomInt(100000, 1000000)
         .toString();
 
-      console.log("OTP GENERATED");
-
       const otpHash =
         await bcrypt.hash(otp, 10);
 
-      console.log("OTP HASHED");
-
       await Otp.deleteMany({ email });
-
-      console.log("OLD OTP DELETED");
 
       await Otp.create({
         email,
@@ -133,34 +121,19 @@ exports.sendOtp = asyncHandler(
         lastSentAt: new Date(),
       });
 
-      console.log("OTP SAVED");
-
-      console.log(
-        "BEFORE MAIL SEND"
-      );
-
       await sendOtpMail(email, otp);
-
-      console.log(
-        "MAIL SENT SUCCESS"
-      );
 
       if (
         process.env.NODE_ENV !==
         'production'
       ) {
-        console.log('OTP:', otp);
+        logger.info('dev_otp_generated', { email, otp });
       }
 
       res.json({
         message: 'OTP sent',
       });
     } catch (error) {
-      console.log(
-        "SEND OTP ERROR:",
-        error
-      );
-
       throw error;
     }
   }
@@ -259,12 +232,31 @@ exports.verifyOtp = asyncHandler(
     let user = await User.findOne({
       email,
     });
+    const isNewUser = !user;
 
     if (!user) {
       user = await User.create({
         email,
         coins: 100,
       });
+    }
+
+    await ensureReferralCode(user);
+
+    if (isNewUser && req.body.referralCode) {
+      try {
+        await applyReferralCode({
+          userId: user._id,
+          code: req.body.referralCode,
+        });
+        user = await User.findById(user._id);
+      } catch (error) {
+        logger.warn('referral_apply_during_signup_failed', {
+          email,
+          code: req.body.referralCode,
+          error,
+        });
+      }
     }
 
     otpRecord.consumed = true;
@@ -284,6 +276,7 @@ exports.verifyOtp = asyncHandler(
       message: 'Login successful',
       token,
       user: serializeUser(user),
+      isNewUser,
     });
   }
 );

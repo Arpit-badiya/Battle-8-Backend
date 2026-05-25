@@ -3,6 +3,7 @@ const Team = require('../models/Team');
 const User = require('../models/User');
 const { AppError, asyncHandler } = require('../middlewares/errorMiddleware');
 const cache = require('../services/cacheService');
+const { applyReferralCode, getReferralStats } = require('../services/referralService');
 const { validateDisplayName } = require('../utils/helpers');
 
 const serializeUser = (user) => ({
@@ -12,6 +13,7 @@ const serializeUser = (user) => ({
   name: user.name || '',
   coins: user.coins,
   role: user.role,
+  referralCode: user.referralCode || '',
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
 });
@@ -50,11 +52,15 @@ exports.getProfile = asyncHandler(async (req, res) => {
     throw new AppError('User not found', 404);
   }
 
-  const stats = await getProfileStats(req.user.id);
+  const [stats, referral] = await Promise.all([
+    getProfileStats(req.user.id),
+    getReferralStats(req.user.id),
+  ]);
 
   res.json({
     user: serializeUser(user),
     stats,
+    referral,
   });
 });
 
@@ -85,11 +91,29 @@ exports.updateProfile = asyncHandler(async (req, res) => {
   const contestIds = await Team.find({ user: req.user.id }).distinct('contest');
   await Promise.all(contestIds.map((contestId) => cache.del(`leaderboard:${contestId}`)));
 
-  const stats = await getProfileStats(req.user.id);
+  const [stats, referral] = await Promise.all([
+    getProfileStats(req.user.id),
+    getReferralStats(req.user.id),
+  ]);
 
   res.json({
     message: 'Profile updated',
     user: serializeUser(user),
     stats,
+    referral,
+  });
+});
+
+exports.applyReferral = asyncHandler(async (req, res) => {
+  await applyReferralCode({
+    userId: req.user.id,
+    code: req.body.code,
+  });
+
+  const referral = await getReferralStats(req.user.id);
+
+  res.json({
+    message: 'Referral applied',
+    referral,
   });
 });

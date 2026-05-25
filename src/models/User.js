@@ -33,10 +33,30 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "admin"],
       default: "user",
     },
+
+    referralCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      unique: true,
+      sparse: true,
+    },
+
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    referralRewardedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { optimisticConcurrency: true, timestamps: true }
 );
 
 userSchema.index({ name: 1 });
+userSchema.index({ referredBy: 1, createdAt: -1 });
 
 module.exports = mongoose.model("User", userSchema);

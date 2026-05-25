@@ -23,6 +23,7 @@ const connectDB = async () => {
 
     logger.info("mongodb_connected", {
       host: serverStatus.me || serverStatus.primary || "unknown",
+      database: mongoose.connection.db.databaseName,
       replicaSet: serverStatus.setName || null,
     });
   } catch (error) {

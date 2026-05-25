@@ -10,7 +10,9 @@ const leaderboardService = require('../services/leaderboardService');
 const resultService = require('../services/resultService');
 const { refundContestEntries } = require('../services/refundService');
 const { emitContestUpdate } = require('../services/realtimeService');
+const { normalizeKey, parsePlayerImport, parseResultImport } = require('../services/importService');
 const { calculateContestAccounting } = require('../services/prizeService');
+const { withMongoTransaction } = require('../utils/transactions');
 const { isValidObjectId, normalizeContest } = require('../utils/helpers');
 
 const normalizePlayerIds = (players = []) =>
@@ -35,6 +37,13 @@ const ensurePlayersExist = async (playerIds) => {
     throw new AppError('One or more contest players do not exist', 400);
   }
 };
+
+const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const getImportSource = (req) => ({
+  file: req.file,
+  csvText: req.body.csvText || req.body.text || '',
+});
 
 const validateContestPayload = ({ title, players, entryFee, status, startTime, startsAt, platformCommissionPercent }) => {
   if (!title) {
@@ -291,6 +300,218 @@ exports.updateContestPlayers = asyncHandler(async (req, res) => {
   res.json({
     message: 'Contest players updated',
     contest: normalizeContest(contest),
+  });
+});
+
+exports.importContestPlayers = asyncHandler(async (req, res) => {
+  const parsed = await parsePlayerImport(getImportSource(req));
+
+  if (!parsed.players.length || parsed.errors.length) {
+    throw new AppError('Player import validation failed', 400, {
+      errors: parsed.errors.length ? parsed.errors : [{ line: 0, message: 'No player rows found' }],
+    });
+  }
+
+  const defaultCredits = Number(req.body.defaultCredits || 8);
+
+  if (!Number.isFinite(defaultCredits) || defaultCredits < 0) {
+    throw new AppError('Default credits must be greater than or equal to 0', 400);
+  }
+
+  const result = await withMongoTransaction(
+    async (session) => {
+      const contest = await Contest.findById(req.params.contestId).session(session);
+
+      if (!contest) throw new AppError('Contest not found', 404);
+      if (contest.status !== 'upcoming' || contest.joined > 0) {
+        throw new AppError('Players can be imported only before the contest receives joins', 409);
+      }
+
+      const orQuery = parsed.players.map((player) => ({
+        name: new RegExp(`^${escapeRegex(player.name)}$`, 'i'),
+        team: new RegExp(`^${escapeRegex(player.team)}$`, 'i'),
+      }));
+      const existingPlayers = await Player.find({ $or: orQuery }).session(session);
+      const playerByKey = new Map(
+        existingPlayers.map((player) => [`${normalizeKey(player.team)}:${normalizeKey(player.name)}`, player])
+      );
+      const importedPlayerIds = [];
+      let created = 0;
+      let reused = 0;
+
+      for (const row of parsed.players) {
+        const key = `${normalizeKey(row.team)}:${normalizeKey(row.name)}`;
+        let player = playerByKey.get(key);
+
+        if (player) {
+          reused += 1;
+        } else {
+          try {
+            [player] = await Player.create(
+              [
+                {
+                  name: row.name,
+                  team: row.team,
+                  credits: defaultCredits,
+                  role: 'Assaulter',
+                },
+              ],
+              { session }
+            );
+            created += 1;
+            playerByKey.set(key, player);
+          } catch (error) {
+            if (error.code !== 11000) {
+              throw error;
+            }
+            player = await Player.findOne({
+              name: new RegExp(`^${escapeRegex(row.name)}$`, 'i'),
+              team: new RegExp(`^${escapeRegex(row.team)}$`, 'i'),
+            }).session(session);
+            if (!player) throw error;
+            reused += 1;
+          }
+        }
+
+        importedPlayerIds.push(player._id);
+      }
+
+      contest.contestPlayers = [...new Set(importedPlayerIds.map(String))];
+      await contest.save({ session });
+
+      await AdminAudit.create(
+        [
+          {
+            admin: req.user.id,
+            action: 'CONTEST_PLAYERS_IMPORTED',
+            targetType: 'Contest',
+            targetId: contest._id,
+            metadata: {
+              rows: parsed.players.length,
+              created,
+              reused,
+              defaultCredits,
+            },
+            ip: req.ip,
+          },
+        ],
+        { session }
+      );
+
+      return {
+        contest,
+        summary: {
+          rows: parsed.players.length,
+          imported: contest.contestPlayers.length,
+          created,
+          reused,
+          errors: [],
+        },
+      };
+    },
+    {
+      fallback: async () => {
+        throw new AppError('Player import requires MongoDB transaction support', 500);
+      },
+      name: 'import_contest_players',
+    }
+  );
+
+  await cache.del('contests:list');
+  emitContestUpdate(normalizeContest(result.contest));
+
+  res.json({
+    message: 'Contest players imported',
+    contest: normalizeContest(result.contest),
+    summary: result.summary,
+  });
+});
+
+exports.importContestResults = asyncHandler(async (req, res) => {
+  const parsed = await parseResultImport(getImportSource(req));
+
+  if (!parsed.results.length || parsed.errors.length) {
+    throw new AppError('Result import validation failed', 400, {
+      errors: parsed.errors.length ? parsed.errors : [{ line: 0, message: 'No result rows found' }],
+    });
+  }
+
+  const contest = await Contest.findById(req.params.contestId).populate('contestPlayers').lean();
+
+  if (!contest) {
+    throw new AppError('Contest not found', 404);
+  }
+
+  const players = contest.contestPlayers || [];
+  if (!players.length) {
+    throw new AppError('Contest players are not configured', 400);
+  }
+
+  const playerByName = new Map();
+  const duplicateNames = new Set();
+
+  players.forEach((player) => {
+    const key = normalizeKey(player.name);
+    if (playerByName.has(key)) {
+      duplicateNames.add(player.name);
+      return;
+    }
+    playerByName.set(key, player);
+  });
+
+  if (duplicateNames.size) {
+    throw new AppError(
+      `Duplicate player names in contest: ${[...duplicateNames].join(', ')}. Rename or enter results manually.`,
+      400
+    );
+  }
+
+  const errors = [];
+  const playerResults = parsed.results.map((row) => {
+    const player = playerByName.get(normalizeKey(row.name));
+
+    if (!player) {
+      errors.push({ line: row.line, message: `Player not found in contest: ${row.name}` });
+      return null;
+    }
+
+    return {
+      playerId: player._id,
+      kills: row.kills,
+      placement: row.placement,
+    };
+  }).filter(Boolean);
+
+  const importedIds = new Set(playerResults.map((row) => String(row.playerId)));
+  const missing = players
+    .filter((player) => !importedIds.has(String(player._id)))
+    .map((player) => player.name);
+
+  if (missing.length) {
+    errors.push({
+      line: 0,
+      message: `Missing results for: ${missing.join(', ')}`,
+    });
+  }
+
+  if (errors.length) {
+    throw new AppError('Result import validation failed', 400, { errors });
+  }
+
+  const result = await resultService.processResults({
+    contestId: req.params.contestId,
+    playerResults,
+    adminId: req.user.id,
+    ip: req.ip,
+  });
+
+  res.json({
+    ...result,
+    summary: {
+      rows: parsed.results.length,
+      processed: playerResults.length,
+      errors: [],
+    },
   });
 });
 
