@@ -49,6 +49,9 @@ const refundContestEntriesCore = async ({ contestId, adminId, session = null }) 
 
   contest.participants = [];
   contest.joined = 0;
+  contest.totalCollection = 0;
+  contest.platformCommissionAmount = 0;
+  contest.prizePool = 0;
   await contest.save({ session });
 
   return {

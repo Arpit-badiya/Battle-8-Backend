@@ -10,18 +10,9 @@ const { emitContestUpdate, emitLeaderboardUpdate, emitResultDeclared } = require
 const { getLeaderboard } = require('./leaderboardService');
 const { calculatePlayerPoints, validateResultInput } = require('./pointService');
 const { calculatePrizeDistribution } = require('./prizeService');
-const { creditCoins } = require('./walletService');
+const { creditWinningCoins } = require('./walletService');
 const { withMongoTransaction } = require('../utils/transactions');
 const { getEffectiveContestStatus, isValidObjectId, normalizeContest } = require('../utils/helpers');
-
-const getWinningsMap = (contest, winnerCount) =>
-  new Map(calculatePrizeDistribution({
-    prizePool: contest.prizePool,
-    winnerCount,
-  }).map((item) => [
-    Number(item.rank),
-    Number(item.amount || 0),
-  ]));
 
 const calculateRanks = (teams) => {
   let previousPoints = null;
@@ -58,6 +49,7 @@ const recalculateTeams = async ({ contestId, session = null }) => {
         kills: 0,
         placement: 0,
         points: 0,
+        active: false,
       };
 
       return {
@@ -65,11 +57,12 @@ const recalculateTeams = async ({ contestId, session = null }) => {
         kills: result.kills || 0,
         placement: result.placement || 0,
         points: result.points || 0,
+        active: result.active !== false && resultMap.has(String(playerId)),
       };
     });
 
     team.resultBreakdown = breakdown;
-    team.points = breakdown.reduce((sum, item) => sum + Number(item.points || 0), 0);
+    team.points = breakdown.reduce((sum, item) => sum + (item.active ? Number(item.points || 0) : 0), 0);
     await team.save({ session });
   }
 
@@ -163,6 +156,7 @@ const savePlayerResultCore = async ({ contestId, playerId, kills, placement, adm
           kills: validation.kills,
           placement: validation.placement,
           points,
+          active: true,
         },
       },
     },
@@ -235,7 +229,7 @@ const distributePayouts = async ({ contest, adminId, session = null }) => {
     .sort({ points: -1, updatedAt: 1, createdAt: 1 })
     .session(session);
   const winnings = calculatePrizeDistribution({
-    prizePool: contest.prizePool,
+    prizePool: contest.totalCollection,
     winnerCount: rankedTeams.length,
   });
   const winningsMap = new Map(winnings.map((item) => [Number(item.rank), Number(item.amount || 0)]));
@@ -243,6 +237,7 @@ const distributePayouts = async ({ contest, adminId, session = null }) => {
   const payouts = [];
 
   contest.winnings = winnings;
+  contest.prizePool = Number(contest.totalCollection || 0);
 
   for (let index = 0; index < ranked.length; index += 1) {
     const { rank } = ranked[index];
@@ -278,7 +273,7 @@ const distributePayouts = async ({ contest, adminId, session = null }) => {
         continue;
       }
 
-      await creditCoins({
+      await creditWinningCoins({
         userId: team.user,
         amount,
         reason: `Contest winnings rank ${rank}: ${contest.title}`,
@@ -323,6 +318,12 @@ const distributePayouts = async ({ contest, adminId, session = null }) => {
 
   contest.payoutsDistributed = true;
   contest.payoutsDistributedAt = new Date();
+
+  const totalPayout = payouts.reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+  if (totalPayout > Number(contest.totalCollection || 0)) {
+    throw new AppError('Payout amount exceeds total collected amount', 500);
+  }
+
   await contest.save({ session });
 
   await AdminAudit.create(
@@ -334,8 +335,8 @@ const distributePayouts = async ({ contest, adminId, session = null }) => {
         targetId: contest._id,
         metadata: {
           payoutCount: payouts.length,
-          totalAmount: payouts.reduce((sum, payout) => sum + Number(payout.amount || 0), 0),
-          prizePool: contest.prizePool,
+          totalAmount: totalPayout,
+          prizePool: contest.totalCollection,
           platformCommissionAmount: contest.platformCommissionAmount,
         },
       },
@@ -393,7 +394,17 @@ const completeContestCore = async ({ contestId, adminId, ip = '', session = null
   };
 };
 
-const completeContestWithResultsCore = async ({ contestId, playerResults = [], adminId, ip = '', session = null }) => {
+const completeContestWithResultsCore = async ({
+  contestId,
+  playerResults = [],
+  adminId,
+  ip = '',
+  matchName = '',
+  tournamentName = '',
+  matchIdentifier = '',
+  matchDateTime = null,
+  session = null,
+}) => {
   if (!Array.isArray(playerResults) || playerResults.length === 0) {
     throw new AppError('Player results are required', 400);
   }
@@ -430,10 +441,9 @@ const completeContestWithResultsCore = async ({ contestId, playerResults = [], a
 
   if (
     resultPlayerSet.size !== normalizedResults.length ||
-    resultPlayerSet.size !== contestPlayerSet.size ||
     normalizedResults.some((result) => !contestPlayerSet.has(result.player))
   ) {
-    throw new AppError('Enter one valid result for every contest player', 400);
+    throw new AppError('Enter one valid result for each active contest player', 400);
   }
 
   const playerLines = normalizedResults.map((result) => {
@@ -448,6 +458,7 @@ const completeContestWithResultsCore = async ({ contestId, playerResults = [], a
       kills: validation.kills,
       placement: validation.placement,
       points: calculatePlayerPoints(validation),
+      active: true,
     };
   });
 
@@ -464,6 +475,10 @@ const completeContestWithResultsCore = async ({ contestId, playerResults = [], a
         contest: contestId,
         declaredBy: adminId,
         playerResults: playerLines,
+        matchName: matchName || contest.matchName || contest.title,
+        tournamentName: tournamentName || contest.tournamentName || '',
+        matchIdentifier: matchIdentifier || contest.matchIdentifier || '',
+        matchDateTime: matchDateTime || contest.matchDateTime || contest.startTime || contest.startsAt,
       },
     },
     { upsert: true, session }
@@ -478,6 +493,10 @@ const completeContestWithResultsCore = async ({ contestId, playerResults = [], a
   contest.resultDeclared = true;
   contest.resultDeclaredAt = contest.resultDeclaredAt || new Date();
   contest.resultLockedBy = adminId;
+  contest.matchName = matchName || contest.matchName;
+  contest.tournamentName = tournamentName || contest.tournamentName;
+  contest.matchIdentifier = matchIdentifier || contest.matchIdentifier;
+  contest.matchDateTime = matchDateTime || contest.matchDateTime;
 
   const payouts = await distributePayouts({ contest, adminId, session });
 
@@ -565,5 +584,62 @@ const processResults = async (payload) => {
 module.exports = {
   completeContest,
   processResults,
+  restartResultProcessing: async (payload) => {
+    const result = await withMongoTransaction(
+      async (session) => {
+        const contest = await Contest.findById(payload.contestId).session(session);
+        if (!contest) throw new AppError('Contest not found', 404);
+        if (contest.payoutsDistributed) {
+          throw new AppError('Paid contests cannot restart result processing', 409);
+        }
+
+        await ContestResult.deleteOne({ contest: payload.contestId }).session(session);
+        await Team.updateMany(
+          { contest: payload.contestId },
+          { $set: { points: 0, rank: null, winnings: 0, resultBreakdown: [] } },
+          { session }
+        );
+
+        contest.status = 'live';
+        contest.resultDeclared = false;
+        contest.resultDeclaredAt = null;
+        contest.resultLockedBy = null;
+        await contest.save({ session });
+
+        await AdminAudit.create(
+          [
+            {
+              admin: payload.adminId,
+              action: 'RESULT_PROCESSING_RESTARTED',
+              targetType: 'Contest',
+              targetId: contest._id,
+              metadata: {},
+              ip: payload.ip,
+            },
+          ],
+          { session }
+        );
+
+        return contest;
+      },
+      {
+        fallback: async () => {
+          throw new AppError('Restart result processing requires MongoDB transaction support', 500);
+        },
+        name: 'restart_result_processing',
+      }
+    );
+
+    await cache.del('contests:list', `leaderboard:${payload.contestId}`);
+    const leaderboard = await getLeaderboard(payload.contestId, null, { force: true });
+    emitContestUpdate(normalizeContest(result));
+    emitLeaderboardUpdate(payload.contestId, leaderboard);
+
+    return {
+      message: 'Result processing restarted',
+      contest: normalizeContest(result),
+      leaderboard,
+    };
+  },
   savePlayerResult,
 };

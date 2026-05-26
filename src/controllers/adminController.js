@@ -1,17 +1,21 @@
 const Contest = require('../models/Contest');
+const AdReward = require('../models/AdReward');
 const AdminAudit = require('../models/AdminAudit');
 const Player = require('../models/Player');
 const Team = require('../models/Team');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
+const Withdrawal = require('../models/Withdrawal');
 const { AppError, asyncHandler } = require('../middlewares/errorMiddleware');
 const cache = require('../services/cacheService');
 const leaderboardService = require('../services/leaderboardService');
 const resultService = require('../services/resultService');
+const premiumService = require('../services/premiumService');
 const { refundContestEntries } = require('../services/refundService');
 const { emitContestUpdate } = require('../services/realtimeService');
+const withdrawalService = require('../services/withdrawalService');
 const { normalizeKey, parsePlayerImport, parseResultImport } = require('../services/importService');
-const { calculateContestAccounting } = require('../services/prizeService');
+const { calculateContestAccounting, getDynamicContestAccounting } = require('../services/prizeService');
 const { withMongoTransaction } = require('../utils/transactions');
 const { isValidObjectId, normalizeContest } = require('../utils/helpers');
 
@@ -78,7 +82,7 @@ const validateContestPayload = ({ title, players, entryFee, status, startTime, s
 };
 
 exports.getDashboard = asyncHandler(async (req, res) => {
-  const [totalUsers, totalContests, totalTeams, revenue, platformEarnings] = await Promise.all([
+  const [totalUsers, totalContests, totalTeams, revenue, platformEarnings, pendingWithdrawals, adRewards] = await Promise.all([
     User.countDocuments(),
     Contest.countDocuments(),
     Team.countDocuments(),
@@ -90,6 +94,10 @@ exports.getDashboard = asyncHandler(async (req, res) => {
       { $match: { status: { $in: ['live', 'completed'] } } },
       { $group: { _id: null, total: { $sum: '$platformCommissionAmount' } } },
     ]),
+    Withdrawal.countDocuments({ status: { $in: ['requested', 'approved'] } }),
+    AdReward.aggregate([
+      { $group: { _id: null, ads: { $sum: 1 }, rewards: { $sum: '$totalRewardAmount' } } },
+    ]),
   ]);
 
   res.json({
@@ -98,6 +106,9 @@ exports.getDashboard = asyncHandler(async (req, res) => {
     totalTeams,
     totalRevenue: revenue[0]?.total || 0,
     platformEarnings: platformEarnings[0]?.total || 0,
+    pendingWithdrawals,
+    totalAdsWatched: adRewards[0]?.ads || 0,
+    adRewardCoins: adRewards[0]?.rewards || 0,
   });
 });
 
@@ -128,6 +139,10 @@ exports.createContest = asyncHandler(async (req, res) => {
     endsAt: estimatedEndTime,
     startTime,
     estimatedEndTime,
+    matchName: req.body.matchName || req.body.title,
+    tournamentName: req.body.tournamentName || '',
+    matchIdentifier: req.body.matchIdentifier || '',
+    matchDateTime: req.body.matchDateTime || startTime,
     contestPlayers,
   });
 
@@ -180,15 +195,24 @@ exports.updateContest = asyncHandler(async (req, res) => {
     platformCommissionPercent: req.body.platformCommissionPercent,
   });
   contest.entryFee = accounting.entryFee;
-  contest.totalCollection = accounting.totalCollection;
   contest.platformCommissionPercent = accounting.platformCommissionPercent;
-  contest.platformCommissionAmount = accounting.platformCommissionAmount;
-  contest.prizePool = accounting.prizePool;
+  const dynamicAccounting = getDynamicContestAccounting({
+    entryFee: accounting.entryFee,
+    joined: contest.joined,
+    platformCommissionPercent: accounting.platformCommissionPercent,
+  });
+  contest.totalCollection = dynamicAccounting.totalCollection;
+  contest.platformCommissionAmount = dynamicAccounting.platformCommissionAmount;
+  contest.prizePool = dynamicAccounting.prizePool;
   contest.timeLeft = req.body.timeLeft || contest.timeLeft;
   contest.startsAt = req.body.startsAt || req.body.startTime || contest.startsAt;
   contest.endsAt = req.body.estimatedEndTime || req.body.endsAt || req.body.endTime || contest.endsAt;
   contest.startTime = req.body.startTime || req.body.startsAt || contest.startTime;
   contest.estimatedEndTime = req.body.estimatedEndTime || req.body.endTime || req.body.endsAt || contest.estimatedEndTime;
+  contest.matchName = req.body.matchName ?? contest.matchName;
+  contest.tournamentName = req.body.tournamentName ?? contest.tournamentName;
+  contest.matchIdentifier = req.body.matchIdentifier ?? contest.matchIdentifier;
+  contest.matchDateTime = req.body.matchDateTime || contest.matchDateTime;
   if (Array.isArray(req.body.contestPlayers)) {
     contest.contestPlayers = validatePlayerIdPayload(req.body.contestPlayers);
     await ensurePlayersExist(contest.contestPlayers);
@@ -261,6 +285,126 @@ exports.markContestLive = asyncHandler(async (req, res) => {
   res.json({
     message: 'Contest marked live',
     contest: normalizeContest(contest),
+  });
+});
+
+exports.cancelContest = asyncHandler(async (req, res) => {
+  const contest = await Contest.findById(req.params.contestId);
+
+  if (!contest) {
+    throw new AppError('Contest not found', 404);
+  }
+
+  if (contest.status === 'completed' || contest.payoutsDistributed) {
+    throw new AppError('Completed contest cannot be cancelled', 409);
+  }
+
+  contest.status = 'cancelled';
+  contest.cancelledReason = req.body.reason || 'Cancelled by admin';
+  contest.endTime = new Date();
+  contest.endsAt = contest.endTime;
+  contest.timeLeft = 'CANCELLED';
+  await contest.save();
+
+  const refund = await refundContestEntries({
+    contestId: contest._id,
+    adminId: req.user.id,
+  });
+
+  await AdminAudit.create({
+    admin: req.user.id,
+    action: 'CONTEST_CANCELLED',
+    targetType: 'Contest',
+    targetId: contest._id,
+    metadata: {
+      reason: contest.cancelledReason,
+      refunded: refund.refunded,
+    },
+    ip: req.ip,
+  });
+
+  await cache.del('contests:list', `leaderboard:${contest._id}`);
+  emitContestUpdate(normalizeContest(refund.contest));
+
+  res.json({
+    message: 'Contest cancelled and refunds processed',
+    refunded: refund.refunded,
+    contest: normalizeContest(refund.contest),
+  });
+});
+
+exports.rehostContest = asyncHandler(async (req, res) => {
+  const original = await Contest.findById(req.params.contestId).lean();
+
+  if (!original) {
+    throw new AppError('Contest not found', 404);
+  }
+
+  if (original.status === 'completed' || original.payoutsDistributed) {
+    throw new AppError('Completed contest cannot be rehosted', 409);
+  }
+
+  const [cancelled] = await Promise.all([
+    Contest.findByIdAndUpdate(
+      original._id,
+      {
+        status: 'cancelled',
+        cancelledReason: req.body.reason || 'Match rehosted',
+        endTime: new Date(),
+        endsAt: new Date(),
+        timeLeft: 'REHOSTED',
+      },
+      { new: true }
+    ),
+  ]);
+
+  await refundContestEntries({
+    contestId: original._id,
+    adminId: req.user.id,
+  });
+
+  const newStart = req.body.startTime || req.body.startsAt || original.startTime || original.startsAt;
+  const newContest = await Contest.create({
+    title: req.body.title || `${original.title} Rehost`,
+    players: original.players,
+    entryFee: original.entryFee,
+    prizePool: 0,
+    totalCollection: 0,
+    platformCommissionPercent: original.platformCommissionPercent,
+    platformCommissionAmount: 0,
+    status: 'upcoming',
+    startsAt: newStart,
+    startTime: newStart,
+    endsAt: req.body.estimatedEndTime || original.estimatedEndTime || original.endsAt,
+    estimatedEndTime: req.body.estimatedEndTime || original.estimatedEndTime,
+    contestPlayers: original.contestPlayers,
+    matchName: req.body.matchName || original.matchName || original.title,
+    tournamentName: req.body.tournamentName || original.tournamentName || '',
+    matchIdentifier: req.body.matchIdentifier || `${original.matchIdentifier || original._id}-rehost-${Date.now()}`,
+    matchDateTime: req.body.matchDateTime || newStart,
+    rehostedFrom: original._id,
+  });
+
+  await Contest.updateOne({ _id: original._id }, { rehostedTo: newContest._id });
+
+  await AdminAudit.create({
+    admin: req.user.id,
+    action: 'CONTEST_REHOSTED',
+    targetType: 'Contest',
+    targetId: original._id,
+    metadata: {
+      rehostedTo: newContest._id,
+      cancelledStatus: cancelled?.status,
+    },
+    ip: req.ip,
+  });
+
+  await cache.del('contests:list');
+  emitContestUpdate(normalizeContest(newContest));
+
+  res.status(201).json({
+    message: 'Contest rehosted',
+    contest: normalizeContest(newContest),
   });
 });
 
@@ -482,18 +626,6 @@ exports.importContestResults = asyncHandler(async (req, res) => {
     };
   }).filter(Boolean);
 
-  const importedIds = new Set(playerResults.map((row) => String(row.playerId)));
-  const missing = players
-    .filter((player) => !importedIds.has(String(player._id)))
-    .map((player) => player.name);
-
-  if (missing.length) {
-    errors.push({
-      line: 0,
-      message: `Missing results for: ${missing.join(', ')}`,
-    });
-  }
-
   if (errors.length) {
     throw new AppError('Result import validation failed', 400, { errors });
   }
@@ -501,6 +633,10 @@ exports.importContestResults = asyncHandler(async (req, res) => {
   const result = await resultService.processResults({
     contestId: req.params.contestId,
     playerResults,
+    matchName: req.body.matchName,
+    tournamentName: req.body.tournamentName,
+    matchIdentifier: req.body.matchIdentifier,
+    matchDateTime: req.body.matchDateTime,
     adminId: req.user.id,
     ip: req.ip,
   });
@@ -523,6 +659,73 @@ exports.markContestCompleted = asyncHandler(async (req, res) => {
   });
 
   res.json(result);
+});
+
+exports.restartResultProcessing = asyncHandler(async (req, res) => {
+  const result = await resultService.restartResultProcessing({
+    contestId: req.params.contestId,
+    adminId: req.user.id,
+    ip: req.ip,
+  });
+
+  res.json(result);
+});
+
+exports.getAdRewardLogs = asyncHandler(async (req, res) => {
+  const rewards = await AdReward.find({})
+    .populate('user', 'name email coins winningCoins premium')
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+  res.json({
+    rewards,
+  });
+});
+
+exports.getWithdrawalRequests = asyncHandler(async (req, res) => {
+  const withdrawals = await withdrawalService.listWithdrawals();
+  res.json({
+    withdrawals,
+  });
+});
+
+exports.updateWithdrawalRequest = asyncHandler(async (req, res) => {
+  const withdrawal = await withdrawalService.updateWithdrawalStatus({
+    withdrawalId: req.params.withdrawalId,
+    adminId: req.user.id,
+    status: req.body.status,
+    adminNote: req.body.adminNote,
+    paymentReference: req.body.paymentReference,
+  });
+
+  res.json({
+    withdrawal,
+  });
+});
+
+exports.setUserPremium = asyncHandler(async (req, res) => {
+  const result = await premiumService.setPremiumStatus({
+    userId: req.params.userId,
+    active: req.body.active !== false,
+    expiresAt: req.body.expiresAt || null,
+    adminId: req.user.id,
+  });
+
+  await AdminAudit.create({
+    admin: req.user.id,
+    action: result.user.premium?.active ? 'PREMIUM_ACTIVATED' : 'PREMIUM_EXPIRED',
+    targetType: 'User',
+    targetId: result.user._id,
+    metadata: {
+      expiresAt: result.user.premium?.expiresAt,
+    },
+    ip: req.ip,
+  });
+
+  res.json({
+    user: result.user,
+  });
 });
 
 exports.getLeaderboard = asyncHandler(async (req, res) => {

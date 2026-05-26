@@ -38,7 +38,7 @@ const createPlayers = async () =>
   Player.insertMany(
     Array.from({ length: 8 }).map((_, index) => ({
       name: `Player ${index + 1}`,
-      team: `Team ${index + 1}`,
+      team: 'Team Alpha',
       credits: 8,
       role: ['Assaulter', 'Support', 'Sniper', 'IGL'][index % 4],
     }))
@@ -170,7 +170,7 @@ test('team validation rejects duplicate players and duplicate teams', async () =
     .set('Authorization', `Bearer ${token}`)
     .send({
       contestId: contest._id,
-      players: players.map((player) => player._id),
+      players: players.slice(0, 5).map((player) => player._id),
     })
     .expect(201);
 
@@ -179,7 +179,7 @@ test('team validation rejects duplicate players and duplicate teams', async () =
     .set('Authorization', `Bearer ${token}`)
     .send({
       contestId: contest._id,
-      players: players.map((player) => player._id),
+      players: players.slice(0, 5).map((player) => player._id),
     })
     .expect(409);
 });

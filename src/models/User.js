@@ -28,6 +28,12 @@ const userSchema = new mongoose.Schema(
       min: 0,
     },
 
+    winningCoins: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     role: {
       type: String,
       enum: ["user", "admin"],
@@ -51,6 +57,54 @@ const userSchema = new mongoose.Schema(
     referralRewardedAt: {
       type: Date,
       default: null,
+    },
+
+    adStats: {
+      totalAdsWatched: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      standardRewardCount: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      milestoneClaims: [
+        {
+          type: Number,
+          min: 1,
+        },
+      ],
+      lastRewardAt: {
+        type: Date,
+        default: null,
+      },
+    },
+
+    premium: {
+      active: {
+        type: Boolean,
+        default: false,
+        index: true,
+      },
+      activatedAt: {
+        type: Date,
+        default: null,
+      },
+      expiresAt: {
+        type: Date,
+        default: null,
+      },
+      lastDailyBonusAt: {
+        type: Date,
+        default: null,
+      },
+      source: {
+        type: String,
+        enum: ['manual', 'play_billing', 'razorpay', 'cashfree', 'none'],
+        default: 'none',
+      },
     },
   },
   { optimisticConcurrency: true, timestamps: true }

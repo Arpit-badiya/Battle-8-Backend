@@ -3,7 +3,7 @@ const User = require('../models/User');
 const { AppError, asyncHandler } = require('../middlewares/errorMiddleware');
 
 exports.getWallet = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id).select('coins');
+  const user = await User.findById(req.user.id).select('coins winningCoins');
 
   if (!user) {
     throw new AppError('User not found', 404);
@@ -19,6 +19,8 @@ exports.getWallet = asyncHandler(async (req, res) => {
   res.json({
     balance: user.coins,
     coins: user.coins,
+    mainCoins: user.coins,
+    winningCoins: user.winningCoins || 0,
     transactions,
   });
 });

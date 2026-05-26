@@ -12,6 +12,8 @@ const serializeUser = (user) => ({
   email: user.email,
   name: user.name || '',
   coins: user.coins,
+  winningCoins: user.winningCoins || 0,
+  premium: user.premium || {},
   role: user.role,
   referralCode: user.referralCode || '',
   createdAt: user.createdAt,
@@ -46,7 +48,7 @@ const getProfileStats = async (userId) => {
 };
 
 exports.getProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id).select('_id email name coins role createdAt updatedAt');
+  const user = await User.findById(req.user.id).select('_id email name coins winningCoins premium role createdAt updatedAt');
 
   if (!user) {
     throw new AppError('User not found', 404);
@@ -82,7 +84,7 @@ exports.updateProfile = asyncHandler(async (req, res) => {
       new: true,
       runValidators: true,
     }
-  ).select('_id email name coins role createdAt updatedAt');
+  ).select('_id email name coins winningCoins premium role createdAt updatedAt');
 
   if (!user) {
     throw new AppError('User not found', 404);

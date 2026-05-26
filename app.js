@@ -38,6 +38,12 @@ app.use("/api/team", require("./src/routes/teamRoutes"));
 
 app.use("/api/wallet", require("./src/routes/walletRoutes"));
 
+app.use("/api/ads", require("./src/routes/adRewardRoutes"));
+
+app.use("/api/withdrawals", require("./src/routes/withdrawalRoutes"));
+
+app.use("/api/premium", require("./src/routes/premiumRoutes"));
+
 app.use("/api/profile", require("./src/routes/profileRoutes"));
 
 app.use(

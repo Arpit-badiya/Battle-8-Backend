@@ -38,6 +38,12 @@ const transactionSchema = new mongoose.Schema(
       default: null,
     },
 
+    withdrawal: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Withdrawal",
+      default: null,
+    },
+
     balanceAfter: {
       type: Number,
       required: true,

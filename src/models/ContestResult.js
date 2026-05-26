@@ -22,6 +22,10 @@ const resultLineSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    active: {
+      type: Boolean,
+      default: true,
+    },
   },
   { _id: false }
 );
@@ -65,6 +69,25 @@ const contestResultSchema = new mongoose.Schema(
       required: true,
     },
     playerResults: [resultLineSchema],
+    matchName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    tournamentName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    matchIdentifier: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    matchDateTime: {
+      type: Date,
+      default: null,
+    },
     payouts: [payoutSchema],
     payoutDistributed: {
       type: Boolean,

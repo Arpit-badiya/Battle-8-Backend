@@ -35,6 +35,12 @@ const playerSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+
+    active: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
   },
   { timestamps: true }
 );

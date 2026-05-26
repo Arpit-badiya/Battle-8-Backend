@@ -52,6 +52,8 @@ const serializeUser = (user) => ({
   email: user.email,
   name: user.name || '',
   coins: user.coins,
+  winningCoins: user.winningCoins || 0,
+  premium: user.premium || {},
   role: user.role,
   referralCode: user.referralCode || '',
   createdAt: user.createdAt,

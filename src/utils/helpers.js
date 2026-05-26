@@ -58,6 +58,9 @@ const normalizeContest = (contest, userId = null) => {
 
   const joined = Number(plain.joined || 0);
   const players = Number(plain.players || plain.totalSpots || 0);
+  const entryFee = Number(plain.entryFee || 0);
+  const totalCollection = Number(plain.totalCollection ?? entryFee * joined);
+  const prizePool = Number(plain.prizePool ?? totalCollection);
   const participants = plain.participants || [];
   const status = getEffectiveContestStatus(plain);
   const userJoined = userId
@@ -69,6 +72,9 @@ const normalizeContest = (contest, userId = null) => {
     id: plain._id,
     joined,
     players,
+    entryFee,
+    totalCollection,
+    prizePool,
     totalSpots: players,
     startTime: getContestStart(plain),
     endTime: getContestEnd(plain),
@@ -78,7 +84,6 @@ const normalizeContest = (contest, userId = null) => {
     platformCommissionPercent: Number(plain.platformCommissionPercent || 0),
     totalCollection: Number(plain.totalCollection || 0),
     platformCommissionAmount: Number(plain.platformCommissionAmount || 0),
-    prizePool: Number(plain.prizePool || 0),
     remainingSlots: Math.max(players - joined, 0),
     isFull: players > 0 && joined >= players,
     userJoined,

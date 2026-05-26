@@ -24,7 +24,7 @@ const authMiddleware = async (req, res, next) => {
       process.env.JWT_SECRET
     );
 
-    const user = await User.findById(decoded.id).select("_id email name role coins");
+    const user = await User.findById(decoded.id).select("_id email name role coins winningCoins premium");
 
     if (!user) {
       return res.status(401).json({
@@ -38,6 +38,8 @@ const authMiddleware = async (req, res, next) => {
       name: user.name,
       role: user.role,
       coins: user.coins,
+      winningCoins: user.winningCoins || 0,
+      premium: user.premium || {},
     };
 
     next();

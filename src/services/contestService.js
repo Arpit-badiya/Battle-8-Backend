@@ -7,10 +7,25 @@ const cache = require('./cacheService');
 const { emitContestUpdate } = require('./realtimeService');
 const { debitCoins } = require('./walletService');
 const { rewardFirstPaidJoin } = require('./referralService');
+const { getDynamicContestAccounting } = require('./prizeService');
 const { withMongoTransaction } = require('../utils/transactions');
 const { getEffectiveContestStatus, isValidObjectId, normalizeContest } = require('../utils/helpers');
 
 const CONTEST_LIST_CACHE_KEY = 'contests:list';
+
+const applyDynamicAccounting = (contest) => {
+  if (!contest) return contest;
+  const accounting = getDynamicContestAccounting({
+    entryFee: contest.entryFee,
+    joined: contest.joined,
+    platformCommissionPercent: contest.platformCommissionPercent,
+  });
+
+  contest.totalCollection = accounting.totalCollection;
+  contest.platformCommissionAmount = accounting.platformCommissionAmount;
+  contest.prizePool = accounting.prizePool;
+  return contest;
+};
 
 const getContestsForUser = async (userId) => {
   let contests = await cache.get(CONTEST_LIST_CACHE_KEY);
@@ -24,7 +39,7 @@ const getContestsForUser = async (userId) => {
   const teamContestIds = new Set(teams.map((team) => String(team.contest)));
 
   return contests.map((contest) => ({
-    ...normalizeContest(contest, userId),
+    ...normalizeContest(applyDynamicAccounting(contest), userId),
     teamCreated: teamContestIds.has(String(contest._id)),
   }));
 };
@@ -119,6 +134,9 @@ const joinContestCore = async ({ userId, contestId, idempotencyKey, session = nu
     throw await getJoinFailure(contestId, userId, session);
   }
 
+  applyDynamicAccounting(contest);
+  await contest.save({ session });
+
   const updatedUser = await debitCoins({
     userId,
     amount: contest.entryFee,
@@ -151,7 +169,7 @@ const joinContestCore = async ({ userId, contestId, idempotencyKey, session = nu
 };
 
 const releaseContestSeat = async (contestId, userId) => {
-  await Contest.updateOne(
+  const contest = await Contest.findOneAndUpdate(
     {
       _id: contestId,
       participants: userId,
@@ -160,8 +178,14 @@ const releaseContestSeat = async (contestId, userId) => {
     {
       $pull: { participants: userId },
       $inc: { joined: -1 },
-    }
+    },
+    { returnDocument: 'after' }
   );
+
+  if (contest) {
+    applyDynamicAccounting(contest);
+    await contest.save();
+  }
 };
 
 const joinContestFallback = async (payload) => {

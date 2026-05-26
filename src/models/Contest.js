@@ -28,7 +28,7 @@ const contestSchema = new mongoose.Schema(
 
     prizePool: {
       type: Number,
-      required: true,
+      default: 0,
       min: 0,
     },
 
@@ -94,6 +94,48 @@ const contestSchema = new mongoose.Schema(
         ref: 'Player',
       },
     ],
+
+    matchName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    tournamentName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    matchIdentifier: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
+
+    matchDateTime: {
+      type: Date,
+      default: null,
+    },
+
+    rehostedFrom: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Contest',
+      default: null,
+    },
+
+    rehostedTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Contest',
+      default: null,
+    },
+
+    cancelledReason: {
+      type: String,
+      trim: true,
+      default: '',
+    },
 
     winnings: [
       {

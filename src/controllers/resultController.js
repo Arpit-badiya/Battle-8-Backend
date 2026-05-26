@@ -6,6 +6,10 @@ exports.processResults = asyncHandler(async (req, res) => {
     contestId: req.body.contestId,
     playerResults: req.body.playerResults,
     payouts: req.body.payouts || [],
+    matchName: req.body.matchName,
+    tournamentName: req.body.tournamentName,
+    matchIdentifier: req.body.matchIdentifier,
+    matchDateTime: req.body.matchDateTime,
     adminId: req.user.id,
     ip: req.ip,
   });

@@ -47,11 +47,60 @@ exports.createPlayer = asyncHandler(async (req, res) => {
     credits: Number(req.body.credits),
     role: req.body.role || 'Assaulter',
     image: req.body.image || '',
+    active: req.body.active !== false,
   });
 
   res.status(201).json({
     message: 'Player created',
     player,
+  });
+});
+
+exports.createTeamPlayers = asyncHandler(async (req, res) => {
+  const team = String(req.body.team || '').trim();
+  const players = Array.isArray(req.body.players) ? req.body.players : [];
+
+  if (!team) {
+    throw new AppError('Team name is required', 400);
+  }
+
+  if (players.length !== 5) {
+    throw new AppError('Create exactly 5 players for a team', 400);
+  }
+
+  players.forEach((player) => validatePlayerPayload({
+    ...player,
+    team,
+  }));
+
+  const created = [];
+  for (const player of players) {
+    const doc = await Player.findOneAndUpdate(
+      {
+        name: String(player.name).trim(),
+        team,
+      },
+      {
+        name: String(player.name).trim(),
+        team,
+        credits: Number(player.credits),
+        role: player.role || 'Assaulter',
+        image: player.image || '',
+        active: player.active !== false,
+      },
+      {
+        new: true,
+        upsert: true,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+      }
+    );
+    created.push(doc);
+  }
+
+  res.status(201).json({
+    message: 'Team players saved',
+    players: created,
   });
 });
 
@@ -66,6 +115,7 @@ exports.updatePlayer = asyncHandler(async (req, res) => {
       credits: Number(req.body.credits),
       role: req.body.role || 'Assaulter',
       image: req.body.image || '',
+      active: req.body.active !== false,
     },
     { new: true, runValidators: true }
   );

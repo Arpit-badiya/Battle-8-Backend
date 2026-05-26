@@ -22,6 +22,24 @@ const teamSchema = new mongoose.Schema(
       },
     ],
 
+    selectedTeamName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    captain: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Player',
+      default: null,
+    },
+
+    viceCaptain: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Player',
+      default: null,
+    },
+
     totalCredits: {
       type: Number,
       required: true,
@@ -65,6 +83,10 @@ const teamSchema = new mongoose.Schema(
           type: Number,
           default: 0,
           min: 0,
+        },
+        active: {
+          type: Boolean,
+          default: true,
         },
       },
     ],

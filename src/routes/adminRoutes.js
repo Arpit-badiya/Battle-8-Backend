@@ -15,12 +15,21 @@ const adminMiddleware = require("../middlewares/adminMiddleware");
 
 const {
   getDashboard,
+  getAdRewardLogs,
   createContest,
   updateContest,
+  cancelContest,
   getLeaderboard,
+  getWithdrawalRequests,
   importContestPlayers,
   importContestResults,
+  markContestCompleted,
+  markContestLive,
   refundContest,
+  rehostContest,
+  restartResultProcessing,
+  setUserPremium,
+  updateWithdrawalRequest,
   updateContestPlayers,
 } = require("../controllers/adminController");
 
@@ -29,6 +38,69 @@ router.get(
   authMiddleware,
   adminMiddleware,
   getDashboard
+);
+
+router.get(
+  "/ad-rewards",
+  authMiddleware,
+  adminMiddleware,
+  getAdRewardLogs
+);
+
+router.get(
+  "/withdrawals",
+  authMiddleware,
+  adminMiddleware,
+  getWithdrawalRequests
+);
+
+router.post(
+  "/withdrawals/:withdrawalId/status",
+  authMiddleware,
+  adminMiddleware,
+  updateWithdrawalRequest
+);
+
+router.post(
+  "/users/:userId/premium",
+  authMiddleware,
+  adminMiddleware,
+  setUserPremium
+);
+
+router.post(
+  "/contests/:contestId/live",
+  authMiddleware,
+  adminMiddleware,
+  markContestLive
+);
+
+router.post(
+  "/contests/:contestId/cancel",
+  authMiddleware,
+  adminMiddleware,
+  cancelContest
+);
+
+router.post(
+  "/contests/:contestId/rehost",
+  authMiddleware,
+  adminMiddleware,
+  rehostContest
+);
+
+router.post(
+  "/contests/:contestId/complete",
+  authMiddleware,
+  adminMiddleware,
+  markContestCompleted
+);
+
+router.post(
+  "/contests/:contestId/restart-results",
+  authMiddleware,
+  adminMiddleware,
+  restartResultProcessing
 );
 
 router.post(

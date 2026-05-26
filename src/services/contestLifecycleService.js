@@ -1,6 +1,7 @@
 const Contest = require('../models/Contest');
 const cache = require('./cacheService');
 const { emitContestUpdate } = require('./realtimeService');
+const { refundContestEntries } = require('./refundService');
 const { normalizeContest } = require('../utils/helpers');
 const logger = require('../utils/logger');
 
@@ -56,6 +57,51 @@ const promoteDueContestsToLive = async () => {
   return updated;
 };
 
+const cancelStaleLiveContests = async ({ maxLiveMs = 24 * 60 * 60 * 1000 } = {}) => {
+  const cutoff = new Date(Date.now() - maxLiveMs);
+  const staleContests = await Contest.find({
+    status: 'live',
+    resultDeclared: false,
+    $or: [
+      { startTime: { $lte: cutoff } },
+      { startsAt: { $lte: cutoff } },
+      { updatedAt: { $lte: cutoff } },
+    ],
+  }).limit(25);
+
+  let cancelled = 0;
+
+  for (const contest of staleContests) {
+    contest.status = 'cancelled';
+    contest.cancelledReason = 'Auto-cancelled after 24 hours live';
+    contest.endTime = new Date();
+    contest.endsAt = contest.endTime;
+    contest.timeLeft = 'AUTO-CANCELLED';
+    await contest.save();
+
+    const refund = await refundContestEntries({
+      contestId: contest._id,
+      adminId: null,
+    });
+
+    cancelled += 1;
+    await cache.setActiveMatchState(contest._id, {
+      status: 'cancelled',
+      reason: contest.cancelledReason,
+      refunded: refund.refunded,
+      updatedAt: new Date().toISOString(),
+    });
+    emitContestUpdate(normalizeContest(refund.contest));
+  }
+
+  if (cancelled > 0) {
+    await cache.del('contests:list');
+    logger.warn('contests_auto_cancelled_stale_live', { cancelled });
+  }
+
+  return cancelled;
+};
+
 const startContestLifecycleScheduler = ({ intervalMs = 30000 } = {}) => {
   if (lifecycleInterval) {
     return lifecycleInterval;
@@ -64,10 +110,16 @@ const startContestLifecycleScheduler = ({ intervalMs = 30000 } = {}) => {
   promoteDueContestsToLive().catch((error) => {
     logger.error('contest_lifecycle_initial_failed', { error });
   });
+  cancelStaleLiveContests().catch((error) => {
+    logger.error('contest_auto_cancel_initial_failed', { error });
+  });
 
   lifecycleInterval = setInterval(() => {
     promoteDueContestsToLive().catch((error) => {
       logger.error('contest_lifecycle_tick_failed', { error });
+    });
+    cancelStaleLiveContests().catch((error) => {
+      logger.error('contest_auto_cancel_tick_failed', { error });
     });
   }, intervalMs);
 
@@ -83,6 +135,7 @@ const stopContestLifecycleScheduler = () => {
 
 module.exports = {
   promoteDueContestsToLive,
+  cancelStaleLiveContests,
   startContestLifecycleScheduler,
   stopContestLifecycleScheduler,
 };

@@ -108,7 +108,115 @@ const creditCoins = async ({ userId, amount, reason, contest = null, team = null
   return user;
 };
 
+const creditWinningCoins = async ({ userId, amount, reason, contest = null, team = null, withdrawal = null, idempotencyKey = null, metadata = {}, session = null }) => {
+  const creditAmount = Number(amount || 0);
+
+  if (creditAmount < 0) {
+    throw new AppError('Invalid wallet amount', 400);
+  }
+
+  const user = await User.findByIdAndUpdate(
+    userId,
+    { $inc: { winningCoins: creditAmount } },
+    { returnDocument: 'after', session }
+  );
+
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  try {
+    await Transaction.create(
+      [
+        {
+          user: userId,
+          type: 'credit',
+          amount: creditAmount,
+          reason,
+          contest,
+          team,
+          withdrawal,
+          balanceAfter: user.winningCoins,
+          metadata: { ...metadata, wallet: 'winning' },
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        },
+      ],
+      { session }
+    );
+  } catch (error) {
+    if (!session) {
+      await User.updateOne({ _id: userId, winningCoins: { $gte: creditAmount } }, { $inc: { winningCoins: -creditAmount } });
+    }
+
+    if (error.code === 11000) {
+      throw new AppError('Duplicate wallet transaction', 409);
+    }
+
+    throw error;
+  }
+
+  return user;
+};
+
+const debitWinningCoins = async ({ userId, amount, reason, withdrawal = null, idempotencyKey = null, metadata = {}, session = null }) => {
+  const debitAmount = Number(amount || 0);
+
+  if (debitAmount < 0) {
+    throw new AppError('Invalid wallet amount', 400);
+  }
+
+  const user = await User.findOneAndUpdate(
+    {
+      _id: userId,
+      winningCoins: { $gte: debitAmount },
+    },
+    {
+      $inc: { winningCoins: -debitAmount },
+    },
+    {
+      returnDocument: 'after',
+      session,
+    }
+  );
+
+  if (!user) {
+    throw new AppError('Insufficient winning wallet balance', 400);
+  }
+
+  try {
+    await Transaction.create(
+      [
+        {
+          user: userId,
+          type: 'debit',
+          amount: debitAmount,
+          reason,
+          withdrawal,
+          balanceAfter: user.winningCoins,
+          metadata: { ...metadata, wallet: 'winning' },
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        },
+      ],
+      { session }
+    );
+  } catch (error) {
+    if (!session) {
+      await User.updateOne({ _id: userId }, { $inc: { winningCoins: debitAmount } });
+    }
+
+    if (error.code === 11000) {
+      throw new AppError('Duplicate wallet transaction', 409);
+    }
+
+    throw error;
+  }
+
+  return user;
+};
+
 module.exports = {
   creditCoins,
+  creditWinningCoins,
+  debitWinningCoins,
   debitCoins,
 };

@@ -1,5 +1,10 @@
 const DEFAULT_COMMISSION_PERCENT = 10;
 const MAX_COMMISSION_PERCENT = 50;
+const DEFAULT_PAYOUT_WEIGHTS = [
+  { rank: 1, weight: 50 },
+  { rank: 2, weight: 30 },
+  { rank: 3, weight: 20 },
+];
 
 const toMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
 
@@ -21,30 +26,18 @@ const splitByWeights = (amount, weights) => {
   });
 };
 
-const buildPrizeWeights = (winnerCount) => {
-  const count = Math.max(0, Math.min(Number(winnerCount || 0), 10));
+const getDynamicContestAccounting = ({ entryFee, joined = 0, platformCommissionPercent = 0 }) => {
+  const safeEntryFee = Number(entryFee || 0);
+  const safeJoined = Number(joined || 0);
+  const commissionPercent = Number(platformCommissionPercent || 0);
+  const totalCollection = toMoney(safeEntryFee * safeJoined);
+  const platformCommissionAmount = toMoney((totalCollection * commissionPercent) / 100);
 
-  if (count === 0) return [];
-  if (count <= 3) {
-    return [
-      { rank: 1, weight: 40 },
-      { rank: 2, weight: 25 },
-      { rank: 3, weight: 15 },
-    ].slice(0, count);
-  }
-
-  const weights = [
-    { rank: 1, weight: 40 },
-    { rank: 2, weight: 25 },
-    { rank: 3, weight: 15 },
-  ];
-  const lowerRankWeight = 20 / (count - 3);
-
-  for (let rank = 4; rank <= count; rank += 1) {
-    weights.push({ rank, weight: lowerRankWeight });
-  }
-
-  return weights;
+  return {
+    totalCollection,
+    platformCommissionAmount,
+    prizePool: totalCollection,
+  };
 };
 
 const calculateContestAccounting = ({ entryFee, totalSpots, platformCommissionPercent }) => {
@@ -70,9 +63,9 @@ const calculateContestAccounting = ({ entryFee, totalSpots, platformCommissionPe
     throw new Error(`Platform commission must be between 0 and ${MAX_COMMISSION_PERCENT}%`);
   }
 
-  const totalCollection = toMoney(safeEntryFee * safeTotalSpots);
-  const platformCommissionAmount = toMoney((totalCollection * commissionPercent) / 100);
-  const prizePool = toMoney(totalCollection - platformCommissionAmount);
+  const totalCollection = 0;
+  const platformCommissionAmount = 0;
+  const prizePool = 0;
 
   if (prizePool < 0) {
     throw new Error('Prize pool cannot be negative');
@@ -88,46 +81,23 @@ const calculateContestAccounting = ({ entryFee, totalSpots, platformCommissionPe
   };
 };
 
-const splitRemainingByRanks = (cents, startRank, endRank) => {
-  const count = endRank - startRank + 1;
-  const base = Math.floor(cents / count);
-  const remainder = cents % count;
-
-  return Array.from({ length: count }).map((_, index) => ({
-    rank: startRank + index,
-    amount: (base + (index < remainder ? 1 : 0)) / 100,
-  }));
-};
-
 const calculatePrizeDistribution = ({ prizePool, winnerCount }) => {
-  const count = Math.max(0, Math.min(Number(winnerCount || 0), 10));
+  const count = Math.max(0, Math.min(Number(winnerCount || 0), 3));
   const totalCents = Math.round(toMoney(prizePool) * 100);
 
   if (count === 0 || totalCents <= 0) {
     return [];
   }
 
-  if (count <= 3) {
-    return splitByWeights(toMoney(prizePool), buildPrizeWeights(count))
-      .filter((item) => item.amount > 0);
-  }
-
-  const rank1 = Math.round(totalCents * 0.4);
-  const rank2 = Math.round(totalCents * 0.25);
-  const rank3 = Math.round(totalCents * 0.15);
-  const remaining = Math.max(totalCents - rank1 - rank2 - rank3, 0);
-
-  return [
-    { rank: 1, amount: rank1 / 100 },
-    { rank: 2, amount: rank2 / 100 },
-    { rank: 3, amount: rank3 / 100 },
-    ...splitRemainingByRanks(remaining, 4, count),
-  ].filter((item) => item.amount > 0);
+  return splitByWeights(toMoney(prizePool), DEFAULT_PAYOUT_WEIGHTS.slice(0, count))
+    .filter((item) => item.amount > 0);
 };
 
 module.exports = {
   DEFAULT_COMMISSION_PERCENT,
+  DEFAULT_PAYOUT_WEIGHTS,
   MAX_COMMISSION_PERCENT,
   calculateContestAccounting,
   calculatePrizeDistribution,
+  getDynamicContestAccounting,
 };
