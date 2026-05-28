@@ -8,6 +8,14 @@ const contestSchema = new mongoose.Schema(
       trim: true,
     },
 
+    game: {
+      type: String,
+      required: true,
+      trim: true,
+      default: 'BGMI',
+      index: true,
+    },
+
     players: {
       type: Number,
       required: true,
@@ -92,6 +100,13 @@ const contestSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Player',
+      },
+    ],
+
+    contestTeams: [
+      {
+        type: String,
+        trim: true,
       },
     ],
 
@@ -191,11 +206,13 @@ const contestSchema = new mongoose.Schema(
 );
 
 contestSchema.index({ status: 1, resultDeclared: 1, createdAt: -1 });
+contestSchema.index({ game: 1, status: 1, createdAt: -1 });
 contestSchema.index({ participants: 1, status: 1 });
 contestSchema.index({ status: 1, joined: 1, players: 1 });
 contestSchema.index({ startTime: 1, status: 1 });
 contestSchema.index({ payoutsDistributed: 1, status: 1 });
 contestSchema.index({ contestPlayers: 1, status: 1 });
+contestSchema.index({ contestTeams: 1, status: 1 });
 
 contestSchema.path('winnings').validate(function validateUniqueWinningRanks(winnings) {
   if (!Array.isArray(winnings)) return true;

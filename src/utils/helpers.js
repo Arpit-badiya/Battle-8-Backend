@@ -70,6 +70,7 @@ const normalizeContest = (contest, userId = null) => {
   return {
     ...plain,
     id: plain._id,
+    game: plain.game || 'BGMI',
     joined,
     players,
     entryFee,
@@ -81,6 +82,7 @@ const normalizeContest = (contest, userId = null) => {
     estimatedEndTime: plain.estimatedEndTime || null,
     status,
     contestPlayers: plain.contestPlayers || [],
+    contestTeams: plain.contestTeams || [],
     platformCommissionPercent: Number(plain.platformCommissionPercent || 0),
     totalCollection: Number(plain.totalCollection || 0),
     platformCommissionAmount: Number(plain.platformCommissionAmount || 0),

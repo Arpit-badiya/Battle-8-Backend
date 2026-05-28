@@ -2,7 +2,8 @@ const Player = require('../models/Player');
 const Contest = require('../models/Contest');
 const { AppError, asyncHandler } = require('../middlewares/errorMiddleware');
 
-const allowedRoles = ['Assaulter', 'Support', 'Sniper', 'IGL'];
+const allowedRoles = ['IGL', 'Assaulter', 'Supporter', 'Support', 'Sniper'];
+const normalizeGame = (game = '') => String(game || 'BGMI').trim();
 
 const validatePlayerPayload = ({ name, team, credits, role }) => {
   if (!name || !team) {
@@ -19,7 +20,11 @@ const validatePlayerPayload = ({ name, team, credits, role }) => {
 };
 
 exports.getPlayers = asyncHandler(async (req, res) => {
-  const players = await Player.find().sort({ role: 1, credits: -1, name: 1 });
+  const game = String(req.query.game || '').trim();
+  const players = await Player.find({
+    active: true,
+    ...(game ? { game } : {}),
+  }).sort({ game: 1, team: 1, role: 1, credits: -1, name: 1 });
 
   res.json(players);
 });
@@ -34,16 +39,29 @@ exports.getContestPlayers = asyncHandler(async (req, res) => {
   }
 
   res.json({
-    players: contest.contestPlayers || [],
+    players: (contest.contestPlayers || []).filter((player) => player?.active !== false),
   });
 });
 
 exports.createPlayer = asyncHandler(async (req, res) => {
   validatePlayerPayload(req.body);
+  const game = normalizeGame(req.body.game);
+  const team = String(req.body.team || '').trim();
+
+  const teamExists = await Player.exists({
+    game,
+    team,
+    active: true,
+  });
+
+  if (!teamExists) {
+    throw new AppError('Select a valid existing team for this game', 400);
+  }
 
   const player = await Player.create({
+    game,
     name: req.body.name,
-    team: req.body.team,
+    team,
     credits: Number(req.body.credits),
     role: req.body.role || 'Assaulter',
     image: req.body.image || '',
@@ -57,6 +75,7 @@ exports.createPlayer = asyncHandler(async (req, res) => {
 });
 
 exports.createTeamPlayers = asyncHandler(async (req, res) => {
+  const game = normalizeGame(req.body.game);
   const team = String(req.body.team || '').trim();
   const players = Array.isArray(req.body.players) ? req.body.players : [];
 
@@ -64,8 +83,18 @@ exports.createTeamPlayers = asyncHandler(async (req, res) => {
     throw new AppError('Team name is required', 400);
   }
 
-  if (players.length !== 5) {
-    throw new AppError('Create exactly 5 players for a team', 400);
+  if (players.length === 0) {
+    throw new AppError('Add at least one player for a team', 400);
+  }
+
+  const existingTeam = await Player.exists({
+    game,
+    team,
+    active: true,
+  });
+
+  if (existingTeam) {
+    throw new AppError('Team already added', 409);
   }
 
   players.forEach((player) => validatePlayerPayload({
@@ -73,30 +102,18 @@ exports.createTeamPlayers = asyncHandler(async (req, res) => {
     team,
   }));
 
-  const created = [];
-  for (const player of players) {
-    const doc = await Player.findOneAndUpdate(
-      {
-        name: String(player.name).trim(),
-        team,
-      },
-      {
-        name: String(player.name).trim(),
-        team,
-        credits: Number(player.credits),
-        role: player.role || 'Assaulter',
-        image: player.image || '',
-        active: player.active !== false,
-      },
-      {
-        new: true,
-        upsert: true,
-        runValidators: true,
-        setDefaultsOnInsert: true,
-      }
-    );
-    created.push(doc);
-  }
+  const created = await Player.insertMany(
+    players.map((player) => ({
+      game,
+      name: String(player.name).trim(),
+      team,
+      credits: Number(player.credits),
+      role: player.role || 'Assaulter',
+      image: player.image || '',
+      active: player.active !== false,
+    })),
+    { ordered: true }
+  );
 
   res.status(201).json({
     message: 'Team players saved',
@@ -106,10 +123,12 @@ exports.createTeamPlayers = asyncHandler(async (req, res) => {
 
 exports.updatePlayer = asyncHandler(async (req, res) => {
   validatePlayerPayload(req.body);
+  const game = normalizeGame(req.body.game);
 
   const player = await Player.findByIdAndUpdate(
     req.params.playerId,
     {
+      game,
       name: req.body.name,
       team: req.body.team,
       credits: Number(req.body.credits),
@@ -131,7 +150,11 @@ exports.updatePlayer = asyncHandler(async (req, res) => {
 });
 
 exports.deletePlayer = asyncHandler(async (req, res) => {
-  const player = await Player.findByIdAndDelete(req.params.playerId);
+  const player = await Player.findByIdAndUpdate(
+    req.params.playerId,
+    { active: false },
+    { new: true }
+  );
 
   if (!player) {
     throw new AppError('Player not found', 404);
@@ -139,5 +162,6 @@ exports.deletePlayer = asyncHandler(async (req, res) => {
 
   res.json({
     message: 'Player deleted',
+    player,
   });
 });

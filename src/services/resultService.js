@@ -432,19 +432,46 @@ const completeContestWithResultsCore = async ({
     throw new AppError('Contest players are not configured', 400);
   }
 
-  const normalizedResults = playerResults.map((result) => ({
+  const inputResults = playerResults.map((result) => ({
     player: String(result.playerId || result.player || ''),
     kills: result.kills,
     placement: result.placement,
   }));
-  const resultPlayerSet = new Set(normalizedResults.map((result) => result.player));
+  const resultPlayerSet = new Set(inputResults.map((result) => result.player));
 
   if (
-    resultPlayerSet.size !== normalizedResults.length ||
-    normalizedResults.some((result) => !contestPlayerSet.has(result.player))
+    resultPlayerSet.size !== inputResults.length ||
+    inputResults.some((result) => !contestPlayerSet.has(result.player))
   ) {
     throw new AppError('Enter one valid result for each active contest player', 400);
   }
+
+  const contestPlayerDocs = await Player.find({ _id: { $in: contestPlayerIds } })
+    .select('_id team')
+    .session(session)
+    .lean();
+  const playerTeamById = new Map(contestPlayerDocs.map((player) => [String(player._id), String(player.team || '')]));
+  const resultByPlayer = new Map(inputResults.map((result) => [result.player, result]));
+
+  inputResults.forEach((result) => {
+    const teamName = playerTeamById.get(result.player);
+    if (!teamName) return;
+
+    contestPlayerDocs
+      .filter((player) => String(player.team || '') === teamName)
+      .forEach((player) => {
+        const playerId = String(player._id);
+        if (!resultByPlayer.has(playerId)) {
+          resultByPlayer.set(playerId, {
+            player: playerId,
+            kills: 0,
+            placement: result.placement,
+          });
+        }
+      });
+  });
+
+  const normalizedResults = [...resultByPlayer.values()];
 
   const playerLines = normalizedResults.map((result) => {
     const validation = validateResultInput(result);
@@ -534,7 +561,7 @@ const completeContest = async (payload) => {
     }
   );
 
-  await cache.del('contests:list', `leaderboard:${payload.contestId}`);
+  await cache.delContestLists(`leaderboard:${payload.contestId}`);
   await cache.setActiveMatchState(payload.contestId, {
     status: 'completed',
     resultDeclaredAt: new Date().toISOString(),
@@ -562,7 +589,7 @@ const processResults = async (payload) => {
     }
   );
 
-  await cache.del('contests:list', `leaderboard:${payload.contestId}`);
+  await cache.delContestLists(`leaderboard:${payload.contestId}`);
   await cache.setActiveMatchState(payload.contestId, {
     status: 'completed',
     resultDeclaredAt: new Date().toISOString(),
@@ -630,7 +657,7 @@ module.exports = {
       }
     );
 
-    await cache.del('contests:list', `leaderboard:${payload.contestId}`);
+    await cache.delContestLists(`leaderboard:${payload.contestId}`);
     const leaderboard = await getLeaderboard(payload.contestId, null, { force: true });
     emitContestUpdate(normalizeContest(result));
     emitLeaderboardUpdate(payload.contestId, leaderboard);

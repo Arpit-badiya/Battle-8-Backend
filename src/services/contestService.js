@@ -27,12 +27,25 @@ const applyDynamicAccounting = (contest) => {
   return contest;
 };
 
-const getContestsForUser = async (userId) => {
-  let contests = await cache.get(CONTEST_LIST_CACHE_KEY);
+const normalizeGame = (game = '') => String(game || '').trim();
+
+const getContestsForUser = async (userId, { game = '' } = {}) => {
+  const selectedGame = normalizeGame(game);
+  const cacheKey = selectedGame ? `${CONTEST_LIST_CACHE_KEY}:${selectedGame}` : CONTEST_LIST_CACHE_KEY;
+  let contests = await cache.get(cacheKey);
 
   if (!contests) {
-    contests = await Contest.find().sort({ createdAt: -1 }).lean();
-    await cache.set(CONTEST_LIST_CACHE_KEY, contests, 30);
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    contests = await Contest.find({
+      ...(selectedGame ? { game: selectedGame } : {}),
+      $or: [
+        { status: { $in: ['upcoming', 'live'] } },
+        { endTime: { $gte: cutoff } },
+        { endsAt: { $gte: cutoff } },
+        { updatedAt: { $gte: cutoff } },
+      ],
+    }).sort({ createdAt: -1 }).lean();
+    await cache.set(cacheKey, contests, 30);
   }
 
   const teams = await Team.find({ user: userId }).select('contest').lean();
@@ -91,8 +104,8 @@ const readJoinState = async (contestId, userId, session = null) => {
 const joinContestCore = async ({ userId, contestId, idempotencyKey, session = null }) => {
   const existingTeam = await Team.findOne({ user: userId, contest: contestId }).session(session).lean();
 
-  if (existingTeam) {
-    throw new AppError('Team already created for this contest', 409);
+  if (!existingTeam) {
+    throw new AppError('Create your team before joining this contest', 400);
   }
 
   const transactionKey = idempotencyKey || `contest:${contestId}:user:${userId}`;
@@ -218,7 +231,7 @@ const joinContest = async ({ userId, contestId, idempotencyKey }) => {
     }
   );
 
-  await cache.del(CONTEST_LIST_CACHE_KEY, `leaderboard:${contestId}`);
+  await cache.delContestLists(`leaderboard:${contestId}`);
   emitContestUpdate(result.contest);
 
   return result;

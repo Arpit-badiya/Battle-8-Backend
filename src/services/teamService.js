@@ -48,14 +48,6 @@ const createTeamCore = async ({ userId, contestId, players, captain, viceCaptain
     throw new AppError('Selected players must belong to this contest', 400);
   }
 
-  const isParticipant = (contest.participants || []).some(
-    (participant) => String(participant) === String(userId)
-  );
-
-  if (!isParticipant) {
-    throw new AppError('Join the contest before creating a team', 400);
-  }
-
   const existingTeam = await Team.findOne({ user: userId, contest: contestId }).session(session).lean();
 
   if (existingTeam) {

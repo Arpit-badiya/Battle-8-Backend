@@ -33,6 +33,38 @@ const validatePlayerIdPayload = (players = []) => {
   return normalized;
 };
 
+const normalizeTeamNames = (teams = []) =>
+  [...new Set((Array.isArray(teams) ? teams : []).map((team) => String(team || '').trim()).filter(Boolean))];
+
+const normalizeGame = (game = '') => String(game || 'BGMI').trim();
+
+const getPlayersForContestTeams = async (teams = [], game = 'BGMI') => {
+  const contestTeams = normalizeTeamNames(teams);
+  const selectedGame = normalizeGame(game);
+
+  if (contestTeams.length === 0) {
+    return { contestTeams, contestPlayers: [] };
+  }
+
+  const players = await Player.find({
+    game: selectedGame,
+    active: true,
+    team: { $in: contestTeams },
+  }).select('_id team').lean();
+
+  const foundTeams = new Set(players.map((player) => String(player.team)));
+  const missingTeams = contestTeams.filter((team) => !foundTeams.has(team));
+
+  if (missingTeams.length) {
+    throw new AppError(`No active players found for team(s): ${missingTeams.join(', ')}`, 400);
+  }
+
+  return {
+    contestTeams,
+    contestPlayers: players.map((player) => player._id),
+  };
+};
+
 const ensurePlayersExist = async (playerIds) => {
   if (!playerIds.length) return;
 
@@ -49,11 +81,7 @@ const getImportSource = (req) => ({
   csvText: req.body.csvText || req.body.text || '',
 });
 
-const validateContestPayload = ({ title, players, entryFee, status, startTime, startsAt, platformCommissionPercent }) => {
-  if (!title) {
-    throw new AppError('Contest title is required', 400);
-  }
-
+const validateContestPayload = ({ players, entryFee, status, startTime, startsAt, platformCommissionPercent }) => {
   if (Number(players) <= 0 || Number.isNaN(Number(players))) {
     throw new AppError('Contest slots must be greater than zero', 400);
   }
@@ -114,6 +142,7 @@ exports.getDashboard = asyncHandler(async (req, res) => {
 
 exports.createContest = asyncHandler(async (req, res) => {
   validateContestPayload(req.body);
+  const game = normalizeGame(req.body.game);
   const totalSpots = Number(req.body.totalSpots ?? req.body.players);
   const startTime = req.body.startTime || req.body.startsAt || null;
   const estimatedEndTime = req.body.estimatedEndTime || req.body.endTime || req.body.endsAt || null;
@@ -122,11 +151,24 @@ exports.createContest = asyncHandler(async (req, res) => {
     totalSpots,
     platformCommissionPercent: req.body.platformCommissionPercent,
   });
-  const contestPlayers = validatePlayerIdPayload(req.body.contestPlayers);
-  await ensurePlayersExist(contestPlayers);
+  const teamSelection = await getPlayersForContestTeams(req.body.contestTeams || req.body.teams || [], game);
+  let contestPlayers = teamSelection.contestPlayers;
+
+  if (contestPlayers.length === 0) {
+    contestPlayers = validatePlayerIdPayload(req.body.contestPlayers);
+    await ensurePlayersExist(contestPlayers);
+  }
+
+  if (contestPlayers.length === 0) {
+    throw new AppError('Select at least one participating team', 400);
+  }
+
+  const generatedMatchIdentifier = req.body.matchIdentifier || `MATCH-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+  const title = req.body.title || req.body.matchName || `${game} Contest ${new Date(startTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
 
   const contest = await Contest.create({
-    title: req.body.title,
+    title,
+    game,
     players: totalSpots,
     entryFee: accounting.entryFee,
     totalCollection: accounting.totalCollection,
@@ -139,11 +181,12 @@ exports.createContest = asyncHandler(async (req, res) => {
     endsAt: estimatedEndTime,
     startTime,
     estimatedEndTime,
-    matchName: req.body.matchName || req.body.title,
+    matchName: req.body.matchName || title,
     tournamentName: req.body.tournamentName || '',
-    matchIdentifier: req.body.matchIdentifier || '',
+    matchIdentifier: generatedMatchIdentifier,
     matchDateTime: req.body.matchDateTime || startTime,
     contestPlayers,
+    contestTeams: teamSelection.contestTeams,
   });
 
   await AdminAudit.create({
@@ -157,10 +200,11 @@ exports.createContest = asyncHandler(async (req, res) => {
       platformCommissionAmount: contest.platformCommissionAmount,
       prizePool: contest.prizePool,
       contestPlayers: contestPlayers.length,
+      contestTeams: teamSelection.contestTeams,
     },
     ip: req.ip,
   });
-  await cache.del('contests:list');
+  await cache.delContestLists();
   await cache.setActiveMatchState(contest._id, { status: contest.status, updatedAt: new Date().toISOString() });
   emitContestUpdate(normalizeContest(contest));
 
@@ -187,7 +231,8 @@ exports.updateContest = asyncHandler(async (req, res) => {
     throw new AppError('Contest slots cannot be less than joined users', 400);
   }
 
-  contest.title = req.body.title;
+  contest.title = req.body.title || contest.title;
+  contest.game = req.body.game ? normalizeGame(req.body.game) : contest.game;
   contest.players = Number(payload.players);
   const accounting = calculateContestAccounting({
     entryFee: req.body.entryFee,
@@ -217,6 +262,14 @@ exports.updateContest = asyncHandler(async (req, res) => {
     contest.contestPlayers = validatePlayerIdPayload(req.body.contestPlayers);
     await ensurePlayersExist(contest.contestPlayers);
   }
+  if (Array.isArray(req.body.contestTeams) || Array.isArray(req.body.teams)) {
+    const teamSelection = await getPlayersForContestTeams(req.body.contestTeams || req.body.teams, contest.game);
+    if (teamSelection.contestPlayers.length === 0) {
+      throw new AppError('Select at least one participating team', 400);
+    }
+    contest.contestTeams = teamSelection.contestTeams;
+    contest.contestPlayers = teamSelection.contestPlayers;
+  }
 
   await contest.save();
 
@@ -234,7 +287,7 @@ exports.updateContest = asyncHandler(async (req, res) => {
     },
     ip: req.ip,
   });
-  await cache.del('contests:list');
+  await cache.delContestLists();
   await cache.setActiveMatchState(contest._id, { status: contest.status, updatedAt: new Date().toISOString() });
   emitContestUpdate(normalizeContest(contest));
 
@@ -275,7 +328,7 @@ exports.markContestLive = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  await cache.del('contests:list');
+  await cache.delContestLists();
   await cache.setActiveMatchState(contest._id, {
     status: 'live',
     updatedAt: new Date().toISOString(),
@@ -323,7 +376,7 @@ exports.cancelContest = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  await cache.del('contests:list', `leaderboard:${contest._id}`);
+  await cache.delContestLists(`leaderboard:${contest._id}`);
   emitContestUpdate(normalizeContest(refund.contest));
 
   res.json({
@@ -366,6 +419,7 @@ exports.rehostContest = asyncHandler(async (req, res) => {
   const newStart = req.body.startTime || req.body.startsAt || original.startTime || original.startsAt;
   const newContest = await Contest.create({
     title: req.body.title || `${original.title} Rehost`,
+    game: original.game || 'BGMI',
     players: original.players,
     entryFee: original.entryFee,
     prizePool: 0,
@@ -399,7 +453,7 @@ exports.rehostContest = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  await cache.del('contests:list');
+  await cache.delContestLists();
   emitContestUpdate(normalizeContest(newContest));
 
   res.status(201).json({
@@ -419,7 +473,17 @@ exports.updateContestPlayers = asyncHandler(async (req, res) => {
     throw new AppError('Contest players can only be changed before joining starts', 409);
   }
 
-  const contestPlayers = validatePlayerIdPayload(req.body.players || req.body.contestPlayers);
+  let contestTeams = [];
+  let contestPlayers = [];
+
+  if (Array.isArray(req.body.contestTeams) || Array.isArray(req.body.teams)) {
+    const teamSelection = await getPlayersForContestTeams(req.body.contestTeams || req.body.teams, contest.game);
+    contestTeams = teamSelection.contestTeams;
+    contestPlayers = teamSelection.contestPlayers;
+  } else {
+    contestPlayers = validatePlayerIdPayload(req.body.players || req.body.contestPlayers);
+  }
+
   await ensurePlayersExist(contestPlayers);
 
   if (contestPlayers.length === 0) {
@@ -427,6 +491,7 @@ exports.updateContestPlayers = asyncHandler(async (req, res) => {
   }
 
   contest.contestPlayers = contestPlayers;
+  contest.contestTeams = contestTeams.length ? contestTeams : contest.contestTeams;
   await contest.save();
 
   await AdminAudit.create({
@@ -438,7 +503,7 @@ exports.updateContestPlayers = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
-  await cache.del('contests:list');
+  await cache.delContestLists();
   emitContestUpdate(normalizeContest(contest));
 
   res.json({
@@ -472,6 +537,7 @@ exports.importContestPlayers = asyncHandler(async (req, res) => {
       }
 
       const orQuery = parsed.players.map((player) => ({
+        game: contest.game || 'BGMI',
         name: new RegExp(`^${escapeRegex(player.name)}$`, 'i'),
         team: new RegExp(`^${escapeRegex(player.team)}$`, 'i'),
       }));
@@ -494,6 +560,7 @@ exports.importContestPlayers = asyncHandler(async (req, res) => {
             [player] = await Player.create(
               [
                 {
+                  game: contest.game || 'BGMI',
                   name: row.name,
                   team: row.team,
                   credits: defaultCredits,
@@ -509,6 +576,7 @@ exports.importContestPlayers = asyncHandler(async (req, res) => {
               throw error;
             }
             player = await Player.findOne({
+              game: contest.game || 'BGMI',
               name: new RegExp(`^${escapeRegex(row.name)}$`, 'i'),
               team: new RegExp(`^${escapeRegex(row.team)}$`, 'i'),
             }).session(session);
@@ -521,6 +589,7 @@ exports.importContestPlayers = asyncHandler(async (req, res) => {
       }
 
       contest.contestPlayers = [...new Set(importedPlayerIds.map(String))];
+      contest.contestTeams = normalizeTeamNames(parsed.players.map((player) => player.team));
       await contest.save({ session });
 
       await AdminAudit.create(
@@ -561,7 +630,7 @@ exports.importContestPlayers = asyncHandler(async (req, res) => {
     }
   );
 
-  await cache.del('contests:list');
+  await cache.delContestLists();
   emitContestUpdate(normalizeContest(result.contest));
 
   res.json({

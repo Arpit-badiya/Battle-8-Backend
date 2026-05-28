@@ -2,6 +2,14 @@ const mongoose = require("mongoose");
 
 const playerSchema = new mongoose.Schema(
   {
+    game: {
+      type: String,
+      required: true,
+      trim: true,
+      default: 'BGMI',
+      index: true,
+    },
+
     name: {
       type: String,
       required: true,
@@ -23,10 +31,11 @@ const playerSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: [
+        "IGL",
         "Assaulter",
+        "Supporter",
         "Support",
         "Sniper",
-        "IGL",
       ],
       default: "Assaulter",
     },
@@ -45,7 +54,8 @@ const playerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-playerSchema.index({ name: 1, team: 1 }, { unique: true });
+playerSchema.index({ game: 1, name: 1, team: 1 }, { unique: true });
+playerSchema.index({ game: 1, team: 1, active: 1 });
 playerSchema.index({ role: 1 });
 
 module.exports = mongoose.model(

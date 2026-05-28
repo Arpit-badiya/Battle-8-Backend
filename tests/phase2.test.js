@@ -40,7 +40,7 @@ const createPlayers = async () =>
       name: `Player ${index + 1}`,
       team: 'Team Alpha',
       credits: 8,
-      role: ['Assaulter', 'Support', 'Sniper', 'IGL'][index % 4],
+      role: ['IGL', 'Assaulter', 'Supporter'][index % 3],
     }))
   );
 
@@ -91,11 +91,20 @@ test('Google login verifies Firebase token, creates user, and returns JWT', asyn
 
 test('contest join deducts wallet once and duplicate retries do not double charge', async () => {
   const user = await createUser('join@example.com', 100);
+  const players = await createPlayers();
   const contest = await Contest.create({
     title: 'Solo',
     players: 2,
     entryFee: 25,
     prizePool: 100,
+    contestPlayers: players.map((player) => player._id),
+    contestTeams: ['Team Alpha'],
+  });
+  await Team.create({
+    user: user._id,
+    contest: contest._id,
+    players: players.slice(0, 5).map((player) => player._id),
+    totalCredits: 40,
   });
   const token = tokenFor(user);
 
@@ -124,11 +133,20 @@ test('contest join deducts wallet once and duplicate retries do not double charg
 
 test('contest join rejects insufficient balance and does not consume slot', async () => {
   const user = await createUser('poor@example.com', 5);
+  const players = await createPlayers();
   const contest = await Contest.create({
     title: 'Paid',
     players: 2,
     entryFee: 25,
     prizePool: 100,
+    contestPlayers: players.map((player) => player._id),
+    contestTeams: ['Team Alpha'],
+  });
+  await Team.create({
+    user: user._id,
+    contest: contest._id,
+    players: players.slice(0, 5).map((player) => player._id),
+    totalCredits: 40,
   });
 
   await request(app)

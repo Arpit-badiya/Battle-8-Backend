@@ -70,7 +70,7 @@ const refundContestEntries = async ({ contestId, adminId }) => {
     }
   );
 
-  await cache.del('contests:list', `leaderboard:${contestId}`);
+  await cache.delContestLists(`leaderboard:${contestId}`);
   emitContestUpdate(result.contest);
 
   return result;

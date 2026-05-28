@@ -2,7 +2,9 @@ const { asyncHandler } = require('../middlewares/errorMiddleware');
 const contestService = require('../services/contestService');
 
 exports.getContests = asyncHandler(async (req, res) => {
-  const contests = await contestService.getContestsForUser(req.user.id);
+  const contests = await contestService.getContestsForUser(req.user.id, {
+    game: req.query.game,
+  });
 
   res.json({
     contests,

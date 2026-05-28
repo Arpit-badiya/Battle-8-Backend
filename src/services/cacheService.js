@@ -67,6 +67,17 @@ const del = async (...keys) => {
   }
 };
 
+const contestListKeys = () => [
+  'contests:list',
+  'contests:list:BGMI',
+  'contests:list:Free Fire',
+  'contests:list:Valorant',
+  'contests:list:COD Mobile',
+];
+
+const delContestLists = async (...extraKeys) =>
+  del(...contestListKeys(), ...extraKeys);
+
 const publish = async (channel, payload) => {
   if (!ready || !client) return false;
 
@@ -105,6 +116,7 @@ const getActiveMatchState = (contestId) =>
 module.exports = {
   connectRedis,
   del,
+  delContestLists,
   get,
   getActiveMatchState,
   incrWithTtl,

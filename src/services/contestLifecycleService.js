@@ -50,7 +50,7 @@ const promoteDueContestsToLive = async () => {
   }
 
   if (updated > 0) {
-    await cache.del('contests:list');
+    await cache.delContestLists();
     logger.info('contests_auto_live', { updated });
   }
 
@@ -95,7 +95,7 @@ const cancelStaleLiveContests = async ({ maxLiveMs = 24 * 60 * 60 * 1000 } = {})
   }
 
   if (cancelled > 0) {
-    await cache.del('contests:list');
+    await cache.delContestLists();
     logger.warn('contests_auto_cancelled_stale_live', { cancelled });
   }
 
