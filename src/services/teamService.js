@@ -8,7 +8,7 @@ const { getLeaderboard } = require('./leaderboardService');
 const { withMongoTransaction } = require('../utils/transactions');
 const { getEffectiveContestStatus, isValidObjectId } = require('../utils/helpers');
 
-const MAX_PLAYERS = 5;
+const MAX_PLAYERS = 8;
 const MAX_CREDITS = 75;
 
 const createTeamCore = async ({ userId, contestId, players, captain, viceCaptain, session = null }) => {
@@ -62,15 +62,14 @@ const createTeamCore = async ({ userId, contestId, players, captain, viceCaptain
     throw new AppError('One or more selected players are unavailable', 400);
   }
 
-  const selectedTeamNames = new Set(selectedPlayers.map((player) => String(player.team || '').trim().toLowerCase()));
-  if (selectedTeamNames.size !== 1) {
-    throw new AppError('Select players from one esports team only', 400);
-  }
-
-  const selectedTeamName = selectedPlayers[0]?.team || '';
+  const selectedTeamName = [...new Set(selectedPlayers.map((player) => String(player.team || '').trim()).filter(Boolean))].join(', ');
   const playerIdSet = new Set(playerIds);
   const captainId = captain && playerIdSet.has(String(captain)) ? captain : null;
   const viceCaptainId = viceCaptain && playerIdSet.has(String(viceCaptain)) ? viceCaptain : null;
+
+  if (!captainId || !viceCaptainId) {
+    throw new AppError('Captain and vice-captain are required', 400);
+  }
 
   if (captainId && viceCaptainId && String(captainId) === String(viceCaptainId)) {
     throw new AppError('Captain and vice-captain must be different players', 400);

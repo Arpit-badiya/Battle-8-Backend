@@ -1,6 +1,8 @@
 const Player = require('../models/Player');
 const Contest = require('../models/Contest');
 const { AppError, asyncHandler } = require('../middlewares/errorMiddleware');
+const cache = require('../services/cacheService');
+const { withMongoTransaction } = require('../utils/transactions');
 
 const allowedRoles = ['IGL', 'Assaulter', 'Supporter', 'Support', 'Sniper'];
 const normalizeGame = (game = '') => String(game || 'BGMI').trim();
@@ -163,5 +165,77 @@ exports.deletePlayer = asyncHandler(async (req, res) => {
   res.json({
     message: 'Player deleted',
     player,
+  });
+});
+
+const deleteTeamCore = async ({ game, team, session = null }) => {
+  const players = await Player.find({
+    game,
+    team,
+    active: true,
+  }).select('_id').session(session).lean();
+
+  if (players.length === 0) {
+    throw new AppError('Team not found', 404);
+  }
+
+  const playerIds = players.map((player) => player._id);
+
+  const playerUpdate = await Player.updateMany(
+    {
+      _id: { $in: playerIds },
+      active: true,
+    },
+    { active: false },
+    { session }
+  );
+
+  const contestUpdate = await Contest.updateMany(
+    {
+      game,
+      status: 'upcoming',
+      $or: [
+        { contestTeams: team },
+        { contestPlayers: { $in: playerIds } },
+      ],
+    },
+    {
+      $pull: {
+        contestTeams: team,
+        contestPlayers: { $in: playerIds },
+      },
+    },
+    { session }
+  );
+
+  return {
+    deletedPlayers: playerUpdate.modifiedCount || 0,
+    updatedContests: contestUpdate.modifiedCount || 0,
+  };
+};
+
+exports.deleteTeam = asyncHandler(async (req, res) => {
+  const game = normalizeGame(req.body.game || req.query.game);
+  const team = String(req.body.team || req.query.team || '').trim();
+
+  if (!team) {
+    throw new AppError('Team name is required', 400);
+  }
+
+  const result = await withMongoTransaction(
+    (session) => deleteTeamCore({ game, team, session }),
+    {
+      fallback: () => deleteTeamCore({ game, team }),
+      name: 'team_delete',
+    }
+  );
+
+  await cache.delContestLists();
+
+  res.json({
+    message: 'Team deleted',
+    game,
+    team,
+    ...result,
   });
 });

@@ -13,6 +13,7 @@ const {
   createTeamPlayers,
   updatePlayer,
   deletePlayer,
+  deleteTeam,
 } = require("../controllers/playerController");
 
 router.get("/", getPlayers);
@@ -35,6 +36,13 @@ router.post(
   authMiddleware,
   adminMiddleware,
   createTeamPlayers
+);
+
+router.delete(
+  "/team",
+  authMiddleware,
+  adminMiddleware,
+  deleteTeam
 );
 
 router.put(

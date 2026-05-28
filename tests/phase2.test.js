@@ -188,7 +188,9 @@ test('team validation rejects duplicate players and duplicate teams', async () =
     .set('Authorization', `Bearer ${token}`)
     .send({
       contestId: contest._id,
-      players: players.slice(0, 5).map((player) => player._id),
+      players: players.slice(0, 8).map((player) => player._id),
+      captain: players[0]._id,
+      viceCaptain: players[1]._id,
     })
     .expect(201);
 
@@ -197,7 +199,9 @@ test('team validation rejects duplicate players and duplicate teams', async () =
     .set('Authorization', `Bearer ${token}`)
     .send({
       contestId: contest._id,
-      players: players.slice(0, 5).map((player) => player._id),
+      players: players.slice(0, 8).map((player) => player._id),
+      captain: players[0]._id,
+      viceCaptain: players[1]._id,
     })
     .expect(409);
 });
@@ -270,4 +274,55 @@ test('admin routes are protected and refunds are idempotent', async () => {
 
   expect(updatedUser.coins).toBe(75);
   expect(refunds).toHaveLength(1);
+});
+
+test('admin can delete a team and associated active players safely', async () => {
+  const admin = await createUser('team-delete-admin@example.com', 100, 'admin');
+  const alphaPlayers = await Player.insertMany(
+    Array.from({ length: 3 }).map((_, index) => ({
+      game: 'BGMI',
+      name: `Alpha ${index + 1}`,
+      team: 'Team Alpha',
+      credits: 8,
+      role: 'Assaulter',
+    }))
+  );
+  const [betaPlayer] = await Player.create([
+    {
+      game: 'BGMI',
+      name: 'Beta 1',
+      team: 'Team Beta',
+      credits: 8,
+      role: 'Supporter',
+    },
+  ]);
+
+  const contest = await Contest.create({
+    title: 'Upcoming Team Delete',
+    players: 10,
+    entryFee: 0,
+    prizePool: 0,
+    game: 'BGMI',
+    contestTeams: ['Team Alpha', 'Team Beta'],
+    contestPlayers: [...alphaPlayers.map((player) => player._id), betaPlayer._id],
+  });
+
+  const response = await request(app)
+    .delete('/api/players/team')
+    .set('Authorization', `Bearer ${tokenFor(admin)}`)
+    .send({ game: 'BGMI', team: 'Team Alpha' })
+    .expect(200);
+
+  expect(response.body.deletedPlayers).toBe(3);
+
+  const activeAlpha = await Player.find({ game: 'BGMI', team: 'Team Alpha', active: true }).lean();
+  const inactiveAlpha = await Player.find({ game: 'BGMI', team: 'Team Alpha', active: false }).lean();
+  const activeBeta = await Player.find({ game: 'BGMI', team: 'Team Beta', active: true }).lean();
+  const updatedContest = await Contest.findById(contest._id).lean();
+
+  expect(activeAlpha).toHaveLength(0);
+  expect(inactiveAlpha).toHaveLength(3);
+  expect(activeBeta).toHaveLength(1);
+  expect(updatedContest.contestTeams).toEqual(['Team Beta']);
+  expect(updatedContest.contestPlayers.map(String)).toEqual([String(betaPlayer._id)]);
 });

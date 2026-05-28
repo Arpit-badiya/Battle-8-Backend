@@ -102,12 +102,6 @@ const readJoinState = async (contestId, userId, session = null) => {
 };
 
 const joinContestCore = async ({ userId, contestId, idempotencyKey, session = null }) => {
-  const existingTeam = await Team.findOne({ user: userId, contest: contestId }).session(session).lean();
-
-  if (!existingTeam) {
-    throw new AppError('Create your team before joining this contest', 400);
-  }
-
   const transactionKey = idempotencyKey || `contest:${contestId}:user:${userId}`;
   const existingTransaction = await Transaction.findOne({ idempotencyKey: transactionKey }).session(session).lean();
 
