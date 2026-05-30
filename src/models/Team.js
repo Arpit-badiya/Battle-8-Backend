@@ -40,6 +40,24 @@ const teamSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Team-contest fields (contestType === 'team')
+    selectedTeams: {
+      type: [String],
+      default: [],
+    },
+
+    captainTeam: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    viceCaptainTeam: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
     totalCredits: {
       type: Number,
       required: true,

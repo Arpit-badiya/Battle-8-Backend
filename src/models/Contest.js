@@ -64,6 +64,13 @@ const contestSchema = new mongoose.Schema(
       default: '00:00:00',
     },
 
+    contestType: {
+      type: String,
+      enum: ['fantasy', 'team'],
+      default: 'fantasy',
+      index: true,
+    },
+
     status: {
       type: String,
       enum: ['upcoming', 'live', 'completed', 'cancelled'],

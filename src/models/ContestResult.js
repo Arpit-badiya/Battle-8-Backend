@@ -30,6 +30,34 @@ const resultLineSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Team-level result line — used for team contests where admin enters
+// per-team position and total kills directly (no player-level stats needed).
+const teamResultLineSchema = new mongoose.Schema(
+  {
+    teamName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    position: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    totalKills: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    points: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+  },
+  { _id: false }
+);
+
 const payoutSchema = new mongoose.Schema(
   {
     user: {
@@ -69,6 +97,7 @@ const contestResultSchema = new mongoose.Schema(
       required: true,
     },
     playerResults: [resultLineSchema],
+    teamResults: [teamResultLineSchema],
     matchName: {
       type: String,
       trim: true,

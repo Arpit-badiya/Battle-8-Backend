@@ -81,7 +81,9 @@ const getImportSource = (req) => ({
   csvText: req.body.csvText || req.body.text || '',
 });
 
-const validateContestPayload = ({ players, entryFee, status, startTime, startsAt, platformCommissionPercent }) => {
+const VALID_CONTEST_TYPES = ['fantasy', 'team'];
+
+const validateContestPayload = ({ players, entryFee, status, startTime, startsAt, platformCommissionPercent, contestType }) => {
   if (Number(players) <= 0 || Number.isNaN(Number(players))) {
     throw new AppError('Contest slots must be greater than zero', 400);
   }
@@ -102,6 +104,10 @@ const validateContestPayload = ({ players, entryFee, status, startTime, startsAt
 
   if (status && !['upcoming', 'live', 'completed', 'cancelled'].includes(status)) {
     throw new AppError('Invalid contest status', 400);
+  }
+
+  if (contestType && !VALID_CONTEST_TYPES.includes(contestType)) {
+    throw new AppError(`Invalid contest type. Allowed values: ${VALID_CONTEST_TYPES.join(', ')}`, 400);
   }
 
   if (!startTime && !startsAt) {
@@ -169,6 +175,7 @@ exports.createContest = asyncHandler(async (req, res) => {
   const contest = await Contest.create({
     title,
     game,
+    contestType: VALID_CONTEST_TYPES.includes(req.body.contestType) ? req.body.contestType : 'fantasy',
     players: totalSpots,
     entryFee: accounting.entryFee,
     totalCollection: accounting.totalCollection,
@@ -233,6 +240,9 @@ exports.updateContest = asyncHandler(async (req, res) => {
 
   contest.title = req.body.title || contest.title;
   contest.game = req.body.game ? normalizeGame(req.body.game) : contest.game;
+  if (req.body.contestType && VALID_CONTEST_TYPES.includes(req.body.contestType)) {
+    contest.contestType = req.body.contestType;
+  }
   contest.players = Number(payload.players);
   const accounting = calculateContestAccounting({
     entryFee: req.body.entryFee,
@@ -420,6 +430,7 @@ exports.rehostContest = asyncHandler(async (req, res) => {
   const newContest = await Contest.create({
     title: req.body.title || `${original.title} Rehost`,
     game: original.game || 'BGMI',
+    contestType: original.contestType || 'fantasy',
     players: original.players,
     entryFee: original.entryFee,
     prizePool: 0,

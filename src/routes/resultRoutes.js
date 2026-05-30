@@ -8,6 +8,7 @@ const adminMiddleware = require("../middlewares/adminMiddleware");
 
 const {
   processResults,
+  processTeamResults,
   savePlayerResult,
 } = require("../controllers/resultController");
 
@@ -23,6 +24,13 @@ router.post(
   authMiddleware,
   adminMiddleware,
   processResults
+);
+
+router.post(
+  "/process-team",
+  authMiddleware,
+  adminMiddleware,
+  processTeamResults
 );
 
 module.exports = router;

@@ -7,6 +7,7 @@ const { emitLeaderboardUpdate } = require('./realtimeService');
 const { getLeaderboard } = require('./leaderboardService');
 const { withMongoTransaction } = require('../utils/transactions');
 const { getEffectiveContestStatus, isValidObjectId } = require('../utils/helpers');
+const { TEAM_CONTEST_SELECTED_TEAMS } = require('./pointService');
 
 const MAX_PLAYERS = 8;
 const MAX_CREDITS = 75;
@@ -166,9 +167,118 @@ const getMyTeam = async ({ userId, contestId }) => {
   };
 };
 
+const createTeamContestEntryCore = async ({ userId, contestId, selectedTeams, captainTeam, viceCaptainTeam, session = null }) => {
+  if (!isValidObjectId(contestId)) {
+    throw new AppError('Invalid contest ID', 400);
+  }
+
+  if (!Array.isArray(selectedTeams) || selectedTeams.length !== TEAM_CONTEST_SELECTED_TEAMS) {
+    throw new AppError(`Select exactly ${TEAM_CONTEST_SELECTED_TEAMS} teams`, 400);
+  }
+
+  const normalizedTeams = [...new Set(selectedTeams.map((t) => String(t || '').trim()).filter(Boolean))];
+
+  if (normalizedTeams.length !== TEAM_CONTEST_SELECTED_TEAMS) {
+    throw new AppError(`Select exactly ${TEAM_CONTEST_SELECTED_TEAMS} unique teams`, 400);
+  }
+
+  const normalizedCaptain = String(captainTeam || '').trim();
+  const normalizedViceCaptain = String(viceCaptainTeam || '').trim();
+
+  if (!normalizedCaptain || !normalizedViceCaptain) {
+    throw new AppError('Captain team and vice-captain team are required', 400);
+  }
+
+  if (normalizedCaptain === normalizedViceCaptain) {
+    throw new AppError('Captain team and vice-captain team must be different', 400);
+  }
+
+  if (!normalizedTeams.includes(normalizedCaptain)) {
+    throw new AppError('Captain team must be one of the selected teams', 400);
+  }
+
+  if (!normalizedTeams.includes(normalizedViceCaptain)) {
+    throw new AppError('Vice-captain team must be one of the selected teams', 400);
+  }
+
+  const contest = await Contest.findById(contestId).session(session).lean();
+
+  if (!contest) {
+    throw new AppError('Contest not found', 404);
+  }
+
+  if (contest.contestType !== 'team') {
+    throw new AppError('This endpoint is only for team contests', 400);
+  }
+
+  if (getEffectiveContestStatus(contest) !== 'upcoming') {
+    throw new AppError('Contest is not open for team creation', 400);
+  }
+
+  const contestTeamSet = new Set((contest.contestTeams || []).map((t) => String(t).trim()));
+
+  if (contestTeamSet.size === 0) {
+    throw new AppError('Contest teams are not configured yet', 400);
+  }
+
+  const invalidTeam = normalizedTeams.find((t) => !contestTeamSet.has(t));
+
+  if (invalidTeam) {
+    throw new AppError(`Team "${invalidTeam}" does not belong to this contest`, 400);
+  }
+
+  const existingEntry = await Team.findOne({ user: userId, contest: contestId }).session(session).lean();
+
+  if (existingEntry) {
+    throw new AppError('Entry already created for this contest', 409);
+  }
+
+  try {
+    const [entry] = await Team.create(
+      [
+        {
+          user: userId,
+          contest: contestId,
+          players: [],
+          totalCredits: 0,
+          selectedTeams: normalizedTeams,
+          captainTeam: normalizedCaptain,
+          viceCaptainTeam: normalizedViceCaptain,
+        },
+      ],
+      { session }
+    );
+
+    return entry;
+  } catch (error) {
+    if (error.code === 11000) {
+      throw new AppError('Entry already created for this contest', 409);
+    }
+
+    throw error;
+  }
+};
+
+const createTeamContestEntry = async (payload) => {
+  const entry = await withMongoTransaction(
+    (session) => createTeamContestEntryCore({ ...payload, session }),
+    {
+      fallback: () => createTeamContestEntryCore(payload),
+      name: 'team_contest_entry_create',
+    }
+  );
+
+  await cache.del(`leaderboard:${payload.contestId}`);
+  const leaderboard = await getLeaderboard(payload.contestId, null, { force: true });
+  emitLeaderboardUpdate(payload.contestId, leaderboard);
+
+  return entry;
+};
+
 module.exports = {
   MAX_CREDITS,
   MAX_PLAYERS,
   createTeam,
+  createTeamContestEntry,
   getMyTeam,
 };

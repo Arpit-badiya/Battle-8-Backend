@@ -4,9 +4,11 @@ const router = express.Router();
 
 const authMiddleware = require("../middlewares/authMiddleware");
 
-const { createTeam, getMyTeam } = require("../controllers/teamController");
+const { createTeam, createTeamContestEntry, getMyTeam } = require("../controllers/teamController");
 
 router.post("/create", authMiddleware, createTeam);
+
+router.post("/team-contest/create", authMiddleware, createTeamContestEntry);
 
 router.get("/contest/:contestId/me", authMiddleware, getMyTeam);
 

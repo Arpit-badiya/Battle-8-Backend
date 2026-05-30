@@ -71,6 +71,7 @@ const normalizeContest = (contest, userId = null) => {
     ...plain,
     id: plain._id,
     game: plain.game || 'BGMI',
+    contestType: plain.contestType || 'fantasy',
     joined,
     players,
     entryFee,
