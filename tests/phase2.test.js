@@ -78,8 +78,10 @@ test('Google login verifies Firebase token, creates user, and returns JWT', asyn
     .expect(200);
 
   expect(success.body.token).toBeTruthy();
+  expect(success.body.user._id).toBeTruthy();
   expect(success.body.user.email).toBe(email);
   expect(success.body.user.name).toBe('Google Player');
+  expect(success.body.user.role).toBe('user');
 
   admin.__verifyIdToken.mockRejectedValueOnce(new Error('bad token'));
 
@@ -87,6 +89,22 @@ test('Google login verifies Firebase token, creates user, and returns JWT', asyn
     .post('/api/auth/google')
     .send({ firebaseIdToken: 'bad-firebase-token' })
     .expect(401);
+
+  await User.create({ email: 'admin-login@example.com', role: 'admin', coins: 100 });
+  admin.__verifyIdToken.mockResolvedValueOnce({
+    email: 'admin-login@example.com',
+    email_verified: true,
+    name: 'Admin Player',
+  });
+
+  const adminLogin = await request(app)
+    .post('/api/auth/google')
+    .send({ firebaseIdToken: 'admin-firebase-token' })
+    .expect(200);
+
+  expect(adminLogin.body.user._id).toBeTruthy();
+  expect(adminLogin.body.user.email).toBe('admin-login@example.com');
+  expect(adminLogin.body.user.role).toBe('admin');
 });
 
 test('contest join deducts wallet once and duplicate retries do not double charge', async () => {

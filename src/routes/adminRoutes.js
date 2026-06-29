@@ -12,6 +12,7 @@ const upload = multer({
 const authMiddleware = require("../middlewares/authMiddleware");
 
 const adminMiddleware = require("../middlewares/adminMiddleware");
+const { syncTournament } = require("../controllers/tournamentSyncController");
 
 const {
   getDashboard,
@@ -66,6 +67,13 @@ router.post(
   authMiddleware,
   adminMiddleware,
   setUserPremium
+);
+
+router.post(
+  "/tournaments/sync",
+  authMiddleware,
+  adminMiddleware,
+  syncTournament
 );
 
 router.post(
