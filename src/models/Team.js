@@ -108,6 +108,40 @@ const teamSchema = new mongoose.Schema(
         },
       },
     ],
+
+    teamResultBreakdown: [
+      {
+        teamName: {
+          type: String,
+          trim: true,
+        },
+        finishPoints: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        positionPoints: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        points: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        multiplier: {
+          type: Number,
+          default: 1,
+          min: 1,
+        },
+        totalPoints: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+      },
+    ],
   },
   { optimisticConcurrency: true, timestamps: true }
 );

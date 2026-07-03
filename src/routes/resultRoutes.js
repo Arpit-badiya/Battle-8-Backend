@@ -7,10 +7,24 @@ const authMiddleware = require("../middlewares/authMiddleware");
 const adminMiddleware = require("../middlewares/adminMiddleware");
 
 const {
+  getContestHistory,
+  getContestResult,
   processResults,
   processTeamResults,
   savePlayerResult,
 } = require("../controllers/resultController");
+
+router.get(
+  "/history",
+  authMiddleware,
+  getContestHistory
+);
+
+router.get(
+  "/contest/:contestId",
+  authMiddleware,
+  getContestResult
+);
 
 router.post(
   "/player",

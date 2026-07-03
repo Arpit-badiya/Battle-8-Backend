@@ -190,6 +190,8 @@ exports.createContest = asyncHandler(async (req, res) => {
     estimatedEndTime,
     matchName: req.body.matchName || title,
     tournamentName: req.body.tournamentName || '',
+    tournamentId: isValidObjectId(req.body.tournamentId) ? req.body.tournamentId : null,
+    matchNo: req.body.matchNo ? Number(req.body.matchNo) : null,
     matchIdentifier: generatedMatchIdentifier,
     matchDateTime: req.body.matchDateTime || startTime,
     contestPlayers,
@@ -266,6 +268,12 @@ exports.updateContest = asyncHandler(async (req, res) => {
   contest.estimatedEndTime = req.body.estimatedEndTime || req.body.endTime || req.body.endsAt || contest.estimatedEndTime;
   contest.matchName = req.body.matchName ?? contest.matchName;
   contest.tournamentName = req.body.tournamentName ?? contest.tournamentName;
+  if (req.body.tournamentId === null || isValidObjectId(req.body.tournamentId)) {
+    contest.tournamentId = req.body.tournamentId || null;
+  }
+  if (req.body.matchNo !== undefined) {
+    contest.matchNo = req.body.matchNo ? Number(req.body.matchNo) : null;
+  }
   contest.matchIdentifier = req.body.matchIdentifier ?? contest.matchIdentifier;
   contest.matchDateTime = req.body.matchDateTime || contest.matchDateTime;
   if (Array.isArray(req.body.contestPlayers)) {

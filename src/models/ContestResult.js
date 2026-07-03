@@ -49,6 +49,21 @@ const teamResultLineSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    finishPoints: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    positionPoints: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    totalPoints: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     points: {
       type: Number,
       default: 0,

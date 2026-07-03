@@ -50,6 +50,12 @@ const transactionSchema = new mongoose.Schema(
       min: 0,
     },
 
+    openingBalance: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
     idempotencyKey: {
       type: String,
       default: undefined,

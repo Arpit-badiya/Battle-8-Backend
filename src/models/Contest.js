@@ -117,6 +117,19 @@ const contestSchema = new mongoose.Schema(
       },
     ],
 
+    tournamentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Tournament',
+      default: null,
+      index: true,
+    },
+
+    matchNo: {
+      type: Number,
+      default: null,
+      index: true,
+    },
+
     matchName: {
       type: String,
       trim: true,
@@ -220,6 +233,7 @@ contestSchema.index({ startTime: 1, status: 1 });
 contestSchema.index({ payoutsDistributed: 1, status: 1 });
 contestSchema.index({ contestPlayers: 1, status: 1 });
 contestSchema.index({ contestTeams: 1, status: 1 });
+contestSchema.index({ tournamentId: 1, matchNo: 1, status: 1 });
 
 contestSchema.path('winnings').validate(function validateUniqueWinningRanks(winnings) {
   if (!Array.isArray(winnings)) return true;

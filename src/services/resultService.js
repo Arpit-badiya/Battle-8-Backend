@@ -651,9 +651,30 @@ const recalculateTeamsFromTeamResults = async ({ contestId, teamResultLines, ses
   const teamPointsMap = new Map(
     teamResultLines.map((r) => [String(r.teamName || '').trim(), Number(r.points || 0)])
   );
+  const teamResultsMap = new Map(
+    teamResultLines.map((result) => [String(result.teamName || '').trim(), result])
+  );
 
   for (const team of teams) {
     team.resultBreakdown = [];
+    team.teamResultBreakdown = (team.selectedTeams || []).map((selectedTeam) => {
+      const teamName = String(selectedTeam || '').trim();
+      const result = teamResultsMap.get(teamName) || {};
+      const points = Number(teamPointsMap.get(teamName) || 0);
+      let multiplier = 1;
+
+      if (teamName === String(team.captainTeam || '').trim()) multiplier = 2;
+      if (teamName === String(team.viceCaptainTeam || '').trim()) multiplier = 1.5;
+
+      return {
+        teamName,
+        finishPoints: Number(result.finishPoints ?? result.totalKills ?? 0),
+        positionPoints: Number(result.positionPoints ?? 0),
+        points,
+        multiplier,
+        totalPoints: Math.round(points * multiplier * 100) / 100,
+      };
+    });
     team.points = calculateTeamContestPointsDirect({
       teamResults: teamResultLines,
       selectedTeams: team.selectedTeams || [],
@@ -798,6 +819,107 @@ const completeTeamContestWithResultsCore = async ({
   return { contest, payouts };
 };
 
+const completeTeamContestFromMatchCore = async ({
+  contestId,
+  match,
+  teamResults = [],
+  session = null,
+}) => {
+  if (!isValidObjectId(contestId)) {
+    throw new AppError('Invalid contest ID', 400);
+  }
+
+  if (!Array.isArray(teamResults) || teamResults.length === 0) {
+    throw new AppError('Match team results are required', 400);
+  }
+
+  const contest = await Contest.findById(contestId).session(session);
+  if (!contest) throw new AppError('Contest not found', 404);
+  if (contest.contestType !== 'team') {
+    throw new AppError('Automatic match processing supports team contests only', 400);
+  }
+  if (contest.status === 'completed' || contest.resultDeclared || contest.payoutsDistributed) {
+    return { contest, payouts: [], skipped: true };
+  }
+  if (contest.status === 'cancelled') {
+    throw new AppError('Cancelled contest cannot be completed', 400);
+  }
+
+  const contestTeamSet = new Set((contest.contestTeams || []).map((teamName) => String(teamName).trim()).filter(Boolean));
+  if (contestTeamSet.size === 0) {
+    throw new AppError('Contest teams are not configured', 400);
+  }
+
+  const seenTeams = new Set();
+  const teamResultLines = teamResults
+    .map((result) => {
+      const teamName = String(result.teamName || '').trim();
+      const placement = Number(result.placement);
+      const finishPoints = Number(result.finishPoints || 0);
+      const positionPoints = Number(result.positionPoints || 0);
+      const totalPoints = Number(result.totalPoints ?? finishPoints + positionPoints);
+
+      if (!teamName || !contestTeamSet.has(teamName) || seenTeams.has(teamName)) {
+        return null;
+      }
+
+      seenTeams.add(teamName);
+
+      return {
+        teamName,
+        position: Number.isInteger(placement) && placement > 0 ? placement : 1,
+        totalKills: finishPoints,
+        finishPoints,
+        positionPoints,
+        totalPoints,
+        points: totalPoints,
+      };
+    })
+    .filter(Boolean);
+
+  if (teamResultLines.length === 0) {
+    throw new AppError('No match teams belong to this contest', 400);
+  }
+
+  const existing = await ContestResult.findOne({ contest: contestId }).session(session);
+  if (existing?.payoutDistributed || existing?.teamResults?.length) {
+    return { contest, payouts: [], skipped: true };
+  }
+
+  await ContestResult.findOneAndUpdate(
+    { contest: contestId },
+    {
+      $set: {
+        contest: contestId,
+        declaredBy: contest.resultLockedBy || contest.participants[0] || contest._id,
+        teamResults: teamResultLines,
+        matchName: contest.matchName || `Match ${match.matchNo}`,
+        tournamentName: contest.tournamentName || '',
+        matchIdentifier: contest.matchIdentifier || `match-${match.matchNo}`,
+        matchDateTime: contest.matchDateTime || contest.startTime || contest.startsAt,
+      },
+    },
+    { upsert: true, session }
+  );
+
+  await recalculateTeamsFromTeamResults({ contestId, teamResultLines, session });
+
+  contest.status = 'completed';
+  contest.endTime = new Date();
+  contest.endsAt = contest.endTime;
+  contest.timeLeft = '00:00:00';
+  contest.resultDeclared = true;
+  contest.resultDeclaredAt = contest.resultDeclaredAt || new Date();
+  contest.matchName = contest.matchName || `Match ${match.matchNo}`;
+  contest.matchIdentifier = contest.matchIdentifier || `match-${match.matchNo}`;
+  contest.matchNo = contest.matchNo || match.matchNo;
+  contest.tournamentId = contest.tournamentId || match.tournamentId;
+
+  const payouts = await distributePayouts({ contest, adminId: contest.resultLockedBy || contest.participants[0] || contest._id, session });
+
+  return { contest, payouts };
+};
+
 const processTeamResults = async (payload) => {
   const result = await withMongoTransaction(
     (session) => completeTeamContestWithResultsCore({ ...payload, session }),
@@ -826,7 +948,37 @@ const processTeamResults = async (payload) => {
   };
 };
 
+const completeTeamContestFromMatch = async (payload) => {
+  const result = await withMongoTransaction(
+    (session) => completeTeamContestFromMatchCore({ ...payload, session }),
+    {
+      fallback: () => completeTeamContestFromMatchCore(payload),
+      name: 'complete_team_contest_from_match',
+    }
+  );
+
+  await cache.delContestLists(`leaderboard:${payload.contestId}`);
+  await cache.setActiveMatchState(payload.contestId, {
+    status: 'completed',
+    resultDeclaredAt: new Date().toISOString(),
+  });
+  const leaderboard = await getLeaderboard(payload.contestId, null, { force: true });
+
+  emitContestUpdate(normalizeContest(result.contest));
+  emitLeaderboardUpdate(payload.contestId, leaderboard);
+  emitResultDeclared(payload.contestId);
+
+  return {
+    message: result.skipped ? 'Contest already completed' : 'Contest completed',
+    contest: normalizeContest(result.contest),
+    payouts: result.payouts,
+    leaderboard,
+    skipped: Boolean(result.skipped),
+  };
+};
+
 module.exports = {
+  completeTeamContestFromMatch,
   completeContest,
   processResults,
   processTeamResults,
@@ -842,7 +994,7 @@ module.exports = {
         await ContestResult.deleteOne({ contest: payload.contestId }).session(session);
         await Team.updateMany(
           { contest: payload.contestId },
-          { $set: { points: 0, rank: null, winnings: 0, resultBreakdown: [] } },
+          { $set: { points: 0, rank: null, winnings: 0, resultBreakdown: [], teamResultBreakdown: [] } },
           { session }
         );
 

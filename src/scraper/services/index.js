@@ -4,9 +4,9 @@
  * @returns {void}
  */
 function runScraperService() {
-  // TODO: Implement scraper services when data flow requirements are defined.
 }
 
+runScraperService.matchMonitorService = require('./matchMonitorService');
 runScraperService.tournamentSyncService = require('./tournamentSyncService');
 
 module.exports = runScraperService;

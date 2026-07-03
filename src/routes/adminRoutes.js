@@ -12,7 +12,19 @@ const upload = multer({
 const authMiddleware = require("../middlewares/authMiddleware");
 
 const adminMiddleware = require("../middlewares/adminMiddleware");
-const { syncTournament } = require("../controllers/tournamentSyncController");
+const {
+  getSchedulerStatus,
+  startScheduler,
+  stopScheduler,
+} = require("../controllers/schedulerController");
+const {
+  createTournament,
+  deleteTournament,
+  listTournaments,
+  syncTournament,
+  syncTournamentFromBody,
+  updateTournament,
+} = require("../controllers/tournamentController");
 
 const {
   getDashboard,
@@ -33,6 +45,7 @@ const {
   updateWithdrawalRequest,
   updateContestPlayers,
 } = require("../controllers/adminController");
+const resultController = require("../controllers/resultController");
 
 router.get(
   "/dashboard",
@@ -55,6 +68,27 @@ router.get(
   getWithdrawalRequests
 );
 
+router.get(
+  "/scheduler/status",
+  authMiddleware,
+  adminMiddleware,
+  getSchedulerStatus
+);
+
+router.post(
+  "/scheduler/start",
+  authMiddleware,
+  adminMiddleware,
+  startScheduler
+);
+
+router.post(
+  "/scheduler/stop",
+  authMiddleware,
+  adminMiddleware,
+  stopScheduler
+);
+
 router.post(
   "/withdrawals/:withdrawalId/status",
   authMiddleware,
@@ -70,7 +104,42 @@ router.post(
 );
 
 router.post(
+  "/tournaments",
+  authMiddleware,
+  adminMiddleware,
+  createTournament
+);
+
+router.get(
+  "/tournaments",
+  authMiddleware,
+  adminMiddleware,
+  listTournaments
+);
+
+router.put(
+  "/tournaments/:id",
+  authMiddleware,
+  adminMiddleware,
+  updateTournament
+);
+
+router.delete(
+  "/tournaments/:id",
+  authMiddleware,
+  adminMiddleware,
+  deleteTournament
+);
+
+router.post(
   "/tournaments/sync",
+  authMiddleware,
+  adminMiddleware,
+  syncTournamentFromBody
+);
+
+router.post(
+  "/tournaments/:id/sync",
   authMiddleware,
   adminMiddleware,
   syncTournament
@@ -130,6 +199,13 @@ router.get(
   authMiddleware,
   adminMiddleware,
   getLeaderboard
+);
+
+router.get(
+  "/contest-results/:contestId",
+  authMiddleware,
+  adminMiddleware,
+  resultController.getAdminContestResult
 );
 
 router.post(

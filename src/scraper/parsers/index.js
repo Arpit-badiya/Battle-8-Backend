@@ -4,7 +4,6 @@
  * @returns {void}
  */
 function parse() {
-  // TODO: Implement parser orchestration when scraping workflows are defined.
 }
 
 module.exports = parse;
